@@ -13,52 +13,41 @@ The plugin already leverages these SDK features:
 - Model selection
 - Budget limits
 - Skill loading via `settingSources`
+- **Subagent lifecycle tracking** - Task tools show status (running/completed/error), progress messages, and duration timers
 
 ## Planned Enhancements
 
 ### P0 - Critical
 
 #### Hooks System
-**Status**: Planned
+**Status**: Partially Implemented (via alternative approach)
 **Complexity**: Medium
 **Impact**: High
 
-The SDK provides a comprehensive hooks system that we're not using. Hooks enable reactive UI updates and fine-grained control over the agent lifecycle.
+The SDK hooks system uses **shell command matchers** (external scripts), not inline JavaScript callbacks. This design works well for CLI extensions but is less suitable for embedded GUI contexts like Obsidian plugins.
 
-**Available hooks:**
-- `PreToolUse` - Inspect tool calls before execution, show preview UI
-- `PostToolUse` - React to successful tool execution
-- `PostToolUseFailure` - Handle tool failures gracefully
-- `Notification` - Display SDK notifications in Obsidian
-- `SessionStart` / `SessionEnd` - Track session lifecycle
-- `SubagentStart` / `SubagentStop` - Monitor subagent activity
-- `PreCompact` - Prepare for context compaction
-- `PermissionRequest` - Fine-grained permission control
+**SDK Hook Types (shell-based):**
+- `PreToolUse` / `PostToolUse` - External scripts to run before/after tools
+- `Notification` - External handler for notifications
+- `SessionStart` / `SessionEnd` - Session lifecycle scripts
+- `SubagentStart` / `SubagentStop` - Subagent lifecycle scripts
 
-**Use cases:**
-- Show tool preview cards before execution
-- Display progress notifications during long operations
-- Track token usage per session
-- Implement custom permission UI with more context
+**Our Alternative Approach:**
+Instead of shell hooks, we track lifecycle through the SDK's streaming messages:
+- Tool calls are detected from `assistant` message content blocks
+- Task tools are identified and marked as subagents
+- Status transitions (running → completed/error) are tracked via message flow
+- UI updates reactively as tool state changes
 
-**Implementation hint:**
-```typescript
-query({
-  prompt,
-  options: {
-    hooks: {
-      PreToolUse: [(event) => {
-        // Show tool preview in UI
-        this.showToolPreview(event.toolName, event.toolInput);
-      }],
-      PostToolUse: [(event) => {
-        // Update UI with result
-        this.updateToolResult(event.toolCallId, event.result);
-      }]
-    }
-  }
-})
-```
+**Implemented features:**
+- ✅ Subagent status tracking (running/completed/error/interrupted)
+- ✅ Progress messages and duration timers
+- ✅ Visual distinction for Task tools (accent border)
+- ✅ Cancellation handling
+
+**Future opportunities:**
+- Shell hooks could be used for logging/analytics
+- External notification handlers for system tray integration
 
 ---
 

@@ -54,7 +54,7 @@ Integrations with popular Obsidian plugins.
 
 | Feature | Category | Priority | Status |
 |---------|----------|----------|--------|
-| Hooks for permission UI | SDK | P0 | Planned |
+| Subagent lifecycle UI | SDK | P0 | ✅ Done |
 | Editor cursor integration | Obsidian | P0 | Planned |
 | Context menu actions | Obsidian | P0 | Planned |
 | get_graph_connections tool | Tools | P1 | Planned |
