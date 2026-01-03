@@ -137,10 +137,18 @@ See [docs/architecture.md](docs/architecture.md) for detailed component document
 
 ### Skills (from vault/.claude/skills/)
 
-Skills are automatically loaded if they exist in your vault. The `vault-search` skill provides:
+Skills are automatically loaded if they exist in your vault. This repository includes example skills in the `skills/` directory that you can copy to your vault:
+
+```bash
+cp -r skills/vault-search /path/to/vault/.claude/skills/
+```
+
+The `vault-search` skill provides:
 - Semantic search via sqlite-vec embeddings
 - SQL queries on note frontmatter (Dataview replacement)
 - Index rebuild command
+
+See [skills/README.md](skills/README.md) for installation instructions and how to create custom skills.
 
 ## Data Storage
 
