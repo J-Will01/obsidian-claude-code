@@ -299,6 +299,82 @@ export class ConversationManager {
     }
   }
 
+  // Add a message to a specific conversation by ID (for background streaming support).
+  async addMessageToConversation(
+    conversationId: string,
+    displayMessage: ChatMessage,
+    historyEntry?: MessageParam
+  ) {
+    logger.debug("ConversationManager", "addMessageToConversation called", {
+      conversationId,
+      role: displayMessage.role,
+      isCurrentConv: this.currentConversation?.id === conversationId,
+    });
+
+    // Load the target conversation.
+    let targetConv: StoredConversation | null = null;
+
+    if (this.currentConversation?.id === conversationId) {
+      targetConv = this.currentConversation;
+    } else {
+      // Load from disk without changing currentConversation.
+      targetConv = await this.loadConversationById(conversationId);
+    }
+
+    if (!targetConv) {
+      logger.error("ConversationManager", "Cannot find conversation to save to", { conversationId });
+      return;
+    }
+
+    targetConv.displayMessages.push(displayMessage);
+    if (historyEntry) {
+      targetConv.history.push(historyEntry);
+    }
+    targetConv.messageCount++;
+    targetConv.updatedAt = Date.now();
+
+    await this.saveConversation(targetConv);
+    await this.updateIndexEntry(targetConv);
+    logger.debug("ConversationManager", "addMessageToConversation completed", { conversationId });
+  }
+
+  // Update the session ID for a specific conversation by ID (for background streaming support).
+  async updateSessionIdForConversation(conversationId: string, sessionId: string) {
+    let targetConv: StoredConversation | null = null;
+
+    if (this.currentConversation?.id === conversationId) {
+      targetConv = this.currentConversation;
+    } else {
+      targetConv = await this.loadConversationById(conversationId);
+    }
+
+    if (!targetConv) {
+      logger.error("ConversationManager", "Cannot find conversation to update session ID", { conversationId });
+      return;
+    }
+
+    targetConv.sessionId = sessionId;
+    await this.saveConversation(targetConv);
+    await this.updateIndexEntry(targetConv);
+  }
+
+  // Load a conversation by ID without setting it as current.
+  private async loadConversationById(id: string): Promise<StoredConversation | null> {
+    const vault = this.plugin.app.vault;
+    const path = `${STORAGE_DIR}/${HISTORY_DIR}/${id}.json`;
+
+    try {
+      const exists = await vault.adapter.exists(path);
+      if (!exists) return null;
+
+      const content = await vault.adapter.read(path);
+      return JSON.parse(content) as StoredConversation;
+    } catch (error) {
+      logger.error("ConversationManager", "Failed to load conversation by ID", { error: String(error), id });
+      return null;
+    }
+  }
+
   // Clear current conversation.
   clearCurrent() {
     this.currentConversation = null;

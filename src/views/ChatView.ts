@@ -22,6 +22,7 @@ export class ChatView extends ItemView {
   private streamingMessageId: string | null = null;
   private viewId: string;
   private isCancelling = false;  // Flag to suppress error display during intentional cancel.
+  private activeStreamConversationId: string | null = null;  // Track which conversation owns the active stream.
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -285,16 +286,23 @@ export class ChatView extends ItemView {
   }
 
   private async loadConversation(id: string) {
-    logger.info("ChatView", "loadConversation called", { id });
+    logger.info("ChatView", "loadConversation called", { id, viewId: this.viewId });
 
-    // Set flag to suppress error display during cancel.
-    this.isCancelling = true;
+    // DON'T cancel the stream - let it complete in background.
+    // The activeStreamConversationId tracks which conversation owns the stream.
+    // When switching, we just clear UI state but the stream continues.
 
-    // Cancel any ongoing streaming.
-    this.agentController.cancelStream();
+    // Clear UI streaming state (but stream continues in background).
+    this.streamingMessageId = null;
+    this.isStreaming = false;
 
     const conv = await this.conversationManager.loadConversation(id);
-    logger.info("ChatView", "loadConversation result", { found: !!conv, messageCount: conv?.messageCount });
+    logger.info("ChatView", "loadConversation result", {
+      found: !!conv,
+      messageCount: conv?.messageCount,
+      displayMessageCount: conv ? this.conversationManager.getDisplayMessages().length : 0,
+      sessionId: conv?.sessionId,
+    });
 
     if (conv) {
       this.messages = this.conversationManager.getDisplayMessages();
@@ -317,7 +325,7 @@ export class ChatView extends ItemView {
       logger.error("ChatView", "loadConversation failed - conversation not found", { id });
     }
 
-    this.isCancelling = false;
+    this.chatInput.updateState();
   }
 
   private updateConversationDisplay() {
@@ -419,28 +427,43 @@ export class ChatView extends ItemView {
     this.messageList.render(this.messages);
     this.scrollToBottom();
 
-    logger.info("ChatView", "Calling agentController.sendMessage");
+    // Capture current conversation ID for this stream (for background streaming support).
+    const currentConv = this.conversationManager.getCurrentConversation();
+    this.activeStreamConversationId = currentConv?.id || null;
+    const streamConvId = this.activeStreamConversationId;
+    const streamMsgId = this.streamingMessageId;
+
+    logger.info("ChatView", "Calling agentController.sendMessage", { streamConvId });
     try {
       // Send to agent and get response.
       const response = await this.agentController.sendMessage(content.trim());
 
-      // Update the streaming message with final content.
-      const streamingIndex = this.messages.findIndex((m) => m.id === this.streamingMessageId);
-      if (streamingIndex !== -1) {
-        this.messages[streamingIndex] = response;
+      // Save to the conversation that started the stream (may be different from current if user switched).
+      if (streamConvId) {
+        await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const sessionId = this.agentController.getSessionId();
+        if (sessionId) {
+          await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);
+        }
+      }
+
+      // Only update UI if we're still viewing the same conversation.
+      const nowCurrentConv = this.conversationManager.getCurrentConversation();
+      if (nowCurrentConv?.id === streamConvId) {
+        const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
+        if (streamingIndex !== -1) {
+          this.messages[streamingIndex] = response;
+        } else {
+          this.messages.push(response);
+        }
+        this.messageList.render(this.messages);
+        this.scrollToBottom();
       } else {
-        this.messages.push(response);
+        logger.info("ChatView", "Stream completed but user switched conversations", {
+          streamConvId,
+          currentConvId: nowCurrentConv?.id,
+        });
       }
-
-      // Save to conversation with session ID.
-      await this.conversationManager.addMessage(response);
-      const sessionId = this.agentController.getSessionId();
-      if (sessionId) {
-        await this.conversationManager.updateSessionId(sessionId);
-      }
-
-      this.messageList.render(this.messages);
-      this.scrollToBottom();
     } catch (error) {
       const errorMessage = String(error);
       const isAbort = (error as Error).name === "AbortError" || errorMessage.includes("aborted") || this.isCancelling;
@@ -453,11 +476,18 @@ export class ChatView extends ItemView {
       logger.info("ChatView", "handleSendMessage completed");
       this.isStreaming = false;
       this.streamingMessageId = null;
+      this.activeStreamConversationId = null;
       this.chatInput.updateState();
     }
   }
 
   private handleStreamingMessage(message: ChatMessage) {
+    // Only update UI if we're still viewing the same conversation that owns the stream.
+    const currentConv = this.conversationManager.getCurrentConversation();
+    if (currentConv?.id !== this.activeStreamConversationId) {
+      return; // Stream is for a different conversation, don't update UI.
+    }
+
     // Update or add streaming message.
     if (this.streamingMessageId) {
       const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
@@ -474,6 +504,12 @@ export class ChatView extends ItemView {
   }
 
   private handleToolCall(toolCall: ToolCall) {
+    // Only update UI if we're still viewing the same conversation that owns the stream.
+    const currentConv = this.conversationManager.getCurrentConversation();
+    if (currentConv?.id !== this.activeStreamConversationId) {
+      return;
+    }
+
     // Add tool call to current streaming message.
     if (this.streamingMessageId) {
       const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
@@ -493,6 +529,12 @@ export class ChatView extends ItemView {
   }
 
   private handleToolResult(toolCallId: string, result: string, isError: boolean) {
+    // Only update UI if we're still viewing the same conversation that owns the stream.
+    const currentConv = this.conversationManager.getCurrentConversation();
+    if (currentConv?.id !== this.activeStreamConversationId) {
+      return;
+    }
+
     // Update tool call status.
     if (this.streamingMessageId) {
       const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
@@ -572,6 +614,14 @@ export class ChatView extends ItemView {
   }
 
   private handleError(error: Error) {
+    // Don't show errors during intentional cancellation.
+    if (this.isCancelling) {
+      return;
+    }
+    // Also suppress abort errors that slip through.
+    if (error.name === "AbortError" || error.message.includes("aborted")) {
+      return;
+    }
     this.showError(error.message);
   }
 
@@ -591,11 +641,13 @@ export class ChatView extends ItemView {
   async startNewConversation() {
     logger.info("ChatView", "startNewConversation called");
 
-    // Set flag to suppress error display during cancel.
-    this.isCancelling = true;
+    // DON'T cancel the stream - let it complete in background.
+    // The activeStreamConversationId tracks which conversation owns the stream.
+    // When creating new conversation, we just clear UI state but stream continues.
 
-    // Cancel any streaming.
-    this.agentController.cancelStream();
+    // Clear UI streaming state (but stream continues in background).
+    this.streamingMessageId = null;
+    this.isStreaming = false;
 
     // Clear state.
     this.messages = [];
@@ -610,9 +662,6 @@ export class ChatView extends ItemView {
     this.renderEmptyState();
     logger.info("ChatView", "startNewConversation rendered empty state");
 
-    this.isStreaming = false;
-    this.streamingMessageId = null;
-    this.isCancelling = false;  // Clear the cancel flag.
     this.chatInput.updateState();
 
     // Update tab title and header.
