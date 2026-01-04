@@ -61,7 +61,13 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          # Verify installation and create symlink to known path
+          which claude || echo "claude not in PATH"
+          npm root -g
+          sudo ln -sf $(npm root -g)/../bin/claude /usr/local/bin/claude
+          ls -la /usr/local/bin/claude
 
       - name: Run tests with coverage
         run: bun run test:coverage
