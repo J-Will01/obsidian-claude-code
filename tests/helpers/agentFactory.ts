@@ -1,21 +1,5 @@
 import { vi, type Mock } from "vitest";
 
-// Mock fs module at the top to ensure proper hoisting.
-vi.mock("fs", async () => {
-  const actual = await vi.importActual<typeof import("fs")>("fs");
-  return {
-    ...actual,
-    existsSync: vi.fn().mockImplementation((path: string) =>
-      typeof path === "string" && path.includes("claude")
-    ),
-    appendFileSync: vi.fn(),
-    mkdirSync: vi.fn(),
-    writeFileSync: vi.fn(),
-  };
-});
-
-import * as fs from "fs";
-
 import { createMockPlugin, type MockPlugin, type MockPluginSettings } from "./factories";
 import {
   MockQueryIterator,
@@ -119,15 +103,8 @@ export function waitForEvents(ms = 10): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Helper to configure the fs mock for findClaudeExecutable.
-// The mock is already set up at the top of this file, but this function
-// can be called to reset it after vi.clearAllMocks().
+// No-op function kept for backward compatibility.
+// The Claude CLI should be installed in the test environment.
 export function mockFsForClaudeExecutable(): void {
-  const existsSyncMock = fs.existsSync as Mock;
-  if (typeof existsSyncMock.mockImplementation === "function") {
-    // Return true for any path containing "claude" to handle various install locations.
-    existsSyncMock.mockImplementation((path: string) =>
-      typeof path === "string" && path.includes("claude")
-    );
-  }
+  // No-op - relies on real CLI being installed
 }
