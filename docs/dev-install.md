@@ -4,7 +4,7 @@ Quick setup for testing the obsidian-claude-code plugin in your vault.
 
 ## Prerequisites
 
-- Bun installed (`curl -fsSL https://bun.sh/install | bash`)
+- Node.js installed (includes npm)
 - Claude Code CLI installed (for `claude setup-token`)
 - Obsidian desktop app
 
@@ -12,8 +12,8 @@ Quick setup for testing the obsidian-claude-code plugin in your vault.
 
 ```bash
 cd /path/to/obsidian-claude-code
-bun install
-bun run build
+npm install
+npm run build
 ```
 
 Verify build succeeded:
@@ -117,7 +117,7 @@ For active development with auto-rebuild:
 
 ```bash
 # Terminal 1: Watch mode
-bun run dev
+npm run dev
 
 # Terminal 2: Monitor debug logs
 tail -f ~/.obsidian-claude-code/debug.log
@@ -151,9 +151,9 @@ claude setup-token
 ### Build errors
 ```bash
 # Full rebuild
-rm -rf node_modules bun.lock
-bun install
-bun run build
+rm -rf node_modules package-lock.json
+npm install
+npm run build
 ```
 
 ### Console errors

@@ -5,55 +5,55 @@ all: check build
 
 # Install dependencies.
 install:
-	bun install
+	npm install
 
 # Development with watch mode.
 dev:
-	bun run dev
+	npm run dev
 
 # Production build.
 build:
-	bun run build
+	npm run build
 
 # Run all tests.
 test:
-	bun run test
+	npm run test
 
 # Run tests with watch mode.
 test-watch:
-	bun run test:watch
+	npm run test:watch
 
 # Run unit tests only.
 test-unit:
-	bun run test:unit
+	npm run test:unit
 
 # Run integration tests only.
 test-integration:
-	bun run test:integration
+	npm run test:integration
 
 # Run property-based tests only.
 test-property:
-	bun run test:property
+	npm run test:property
 
 # Run tests with coverage.
 coverage:
-	bun run test:coverage
+	npm run test:coverage
 
 # Run ESLint.
 lint:
-	bun run lint
+	npm run lint
 
 # Run ESLint with auto-fix.
 lint-fix:
-	bun run lint:fix
+	npm run lint:fix
 
 # TypeScript type checking.
 typecheck:
-	bun run typecheck
+	npm run typecheck
 
 # Run all checks (typecheck + lint + test).
 check:
-	bun run check
+	npm run check
 
 # CI pipeline (used in GitHub Actions).
 ci: install typecheck lint coverage build
@@ -69,7 +69,7 @@ coverage-report: coverage
 
 # Quick sanity check for development.
 quick:
-	bun run typecheck && bun run test:unit
+	npm run typecheck && npm run test:unit
 
 # Show available targets.
 help:

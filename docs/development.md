@@ -4,13 +4,7 @@ This document covers setting up a development environment, testing the plugin in
 
 ## Prerequisites
 
-Install Bun for package management and script execution:
-
-```bash
-curl -fsSL https://bun.sh/install | bash
-```
-
-Node.js 18+ is required for TypeScript compilation and the Claude Agent SDK.
+Install Node.js 18+ (includes npm), which is required for TypeScript compilation and the Claude Agent SDK.
 
 ## Development Setup
 
@@ -19,13 +13,13 @@ Clone the repository and install dependencies:
 ```bash
 git clone https://github.com/yourname/obsidian-claude-code
 cd obsidian-claude-code
-bun install
+npm install
 ```
 
 Verify the build works:
 
 ```bash
-bun run build
+npm run build
 ```
 
 This produces `main.js` in the repository root, which Obsidian loads as the plugin entry point.
@@ -73,7 +67,7 @@ If the plugin doesn't appear, check that these files exist in the symlinked dire
 For active development, run the watch command:
 
 ```bash
-bun run dev
+npm run dev
 ```
 
 This rebuilds `main.js` on every source file change. To see changes in Obsidian:
@@ -164,7 +158,7 @@ Ensure `manifest.json` is valid JSON with required fields:
 
 Check TypeScript errors:
 ```bash
-bun run tsc --noEmit
+npm run tsc --noEmit
 ```
 
 The `--skipLibCheck` flag is included in the build script to bypass declaration file issues in dependencies.
@@ -211,7 +205,7 @@ A recommended sequence for testing changes:
 
 ```mermaid
 flowchart LR
-    Edit[Edit source] --> Build[bun run dev]
+    Edit[Edit source] --> Build[npm run dev]
     Build --> Reload[Reload Obsidian]
     Reload --> Test[Test feature]
     Test --> Console[Check console]
@@ -287,7 +281,7 @@ The esbuild configuration (`esbuild.config.mjs`) handles Obsidian-specific bundl
 - Bundles all dependencies except externals into a single file
 - Includes source maps in development mode
 
-Production builds (`bun run build`) enable minification. Development builds (`bun run dev`) watch for changes and rebuild automatically.
+Production builds (`npm run build`) enable minification. Development builds (`npm run dev`) watch for changes and rebuild automatically.
 
 ## Key Dependencies
 
@@ -299,8 +293,8 @@ Production builds (`bun run build`) enable minification. Development builds (`bu
 
 Before submitting changes:
 
-1. Run type checking: `bun run tsc --noEmit`
-2. Build the plugin: `bun run build`
+1. Run type checking: `npm run tsc --noEmit`
+2. Build the plugin: `npm run build`
 3. Test in a fresh vault
 4. Verify console has no errors
 
