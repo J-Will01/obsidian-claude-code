@@ -27,7 +27,7 @@ You need an Anthropic API key or a Claude Max subscription. Both work equally we
 cd /path/to/your/vault/.obsidian/plugins
 git clone https://github.com/Roasbeef/obsidian-claude-code
 cd obsidian-claude-code
-bun install && bun run build
+npm install && npm run build
 ```
 
 Then enable the plugin: Obsidian Settings → Community Plugins → obsidian-claude-code.
@@ -102,8 +102,8 @@ Add this directory to `.gitignore` if you don't want to sync conversation histor
 ## Development
 
 ```bash
-bun run dev      # watch mode with rebuild
-bun run build    # production build
+npm run dev      # watch mode with rebuild
+npm run build    # production build
 make check       # typecheck + lint + test
 ```
 

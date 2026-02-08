@@ -5,17 +5,17 @@ Obsidian plugin that embeds Claude AI as an assistant using the Claude Agent SDK
 
 ## Development Commands
 ```bash
-# Install dependencies (use bun, not npm)
-bun install
+# Install dependencies (use npm)
+npm install
 
 # Development mode with watch
-bun run dev
+npm run dev
 
 # Production build
-bun run build
+npm run build
 
 # Type check only
-bun run typecheck
+npm run typecheck
 
 # Run all checks (typecheck + lint + test)
 make check
@@ -25,13 +25,13 @@ make quick
 ```
 
 ## Package Manager
-**Use `bun` for all package management operations:**
-- `bun install` - Install dependencies
-- `bun add <package>` - Add dependency
-- `bun add -d <package>` - Add dev dependency
-- `bun remove <package>` - Remove dependency
+**Use `npm` for all package management operations:**
+- `npm install` - Install dependencies
+- `npm install <package>` - Add dependency
+- `npm install --save-dev <package>` - Add dev dependency
+- `npm uninstall <package>` - Remove dependency
 
-We use Bun for package management but esbuild for bundling (Obsidian's standard approach).
+We use npm for package management but esbuild for bundling (Obsidian's standard approach).
 
 ## Project Structure
 ```

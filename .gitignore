@@ -5,8 +5,8 @@ node_modules/
 main.js
 *.js.map
 
-# Bun
-bun.lock
+# npm
+package-lock.json
 
 # IDE
 .idea/
