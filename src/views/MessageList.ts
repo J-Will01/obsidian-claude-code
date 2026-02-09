@@ -17,20 +17,16 @@ export class MessageList {
     this.messageRenderers.clear();
 
     for (const message of messages) {
-      const messageEl = this.containerEl.createDiv();
-      const renderer = new MessageRenderer(messageEl, message, this.plugin);
-      renderer.render();
-      this.messageRenderers.set(message.id, renderer);
+      this.addMessage(message);
     }
-
-    // Scroll to bottom.
-    this.scrollToBottom();
   }
 
   updateMessage(messageId: string, updates: Partial<ChatMessage>) {
     const renderer = this.messageRenderers.get(messageId);
     if (renderer) {
       renderer.update(updates);
+    } else if (updates.id && updates.role && updates.content !== undefined && updates.timestamp) {
+      this.addMessage(updates as ChatMessage);
     }
   }
 
@@ -41,7 +37,10 @@ export class MessageList {
     }
   }
 
-  private scrollToBottom() {
-    this.containerEl.scrollTop = this.containerEl.scrollHeight;
+  addMessage(message: ChatMessage) {
+    const messageEl = this.containerEl.createDiv();
+    const renderer = new MessageRenderer(messageEl, message, this.plugin);
+    renderer.render();
+    this.messageRenderers.set(message.id, renderer);
   }
 }

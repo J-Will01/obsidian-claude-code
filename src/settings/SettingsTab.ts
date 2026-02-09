@@ -1,5 +1,8 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice } from "obsidian";
 import type ClaudeCodePlugin from "../main";
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { requireClaudeExecutable } from "../utils/claudeExecutable";
+import { isKeytarAvailable } from "../utils/Keychain";
 
 export class ClaudeCodeSettingTab extends PluginSettingTab {
   plugin: ClaudeCodePlugin;
@@ -32,6 +35,10 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       });
     }
 
+    const authStatus = this.plugin.getAuthStatus();
+    const statusEl = containerEl.createDiv({ cls: "claude-code-auth-status" });
+    statusEl.createEl("p", { text: `Auth status: ${authStatus.label}` });
+
     new Setting(containerEl)
       .setName("API Key")
       .setDesc(
@@ -42,10 +49,9 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder(hasEnvApiKey ? "(using env var)" : "sk-ant-...")
-          .setValue(this.plugin.settings.apiKey)
+          .setValue(this.plugin.getApiKey())
           .onChange(async (value) => {
-            this.plugin.settings.apiKey = value;
-            await this.plugin.saveSettings();
+            await this.plugin.setApiKey(value);
           })
       )
       .then((setting) => {
@@ -74,6 +80,55 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
             this.plugin.settings.baseUrl = value;
             await this.plugin.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName("Store API key in OS keychain")
+      .setDesc(isKeytarAvailable() ? "Use the system keychain when available" : "Keytar not available")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.storeApiKeyInKeychain).onChange(async (value) => {
+          await this.plugin.toggleKeychainStorage(value);
+          this.display();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Test authentication")
+      .setDesc("Runs a lightweight Claude Code SDK call to verify credentials")
+      .addButton((button) =>
+        button.setButtonText("Test auth").onClick(async () => {
+          button.setDisabled(true);
+          try {
+            const env: Record<string, string | undefined> = { ...process.env };
+            const apiKey = this.plugin.getApiKey();
+            if (apiKey) {
+              env.ANTHROPIC_API_KEY = apiKey;
+            }
+            const claudeExecutable = requireClaudeExecutable();
+            const vaultPath = this.plugin.getVaultPath();
+            for await (const message of query({
+              prompt: "ping",
+              options: {
+                cwd: vaultPath,
+                env,
+                pathToClaudeCodeExecutable: claudeExecutable,
+                model: this.plugin.settings.model || "sonnet",
+                includePartialMessages: false,
+                maxTurns: 1,
+                maxBudgetUsd: 0.01,
+              },
+            })) {
+              if (message.type === "result" && message.subtype === "success") {
+                new Notice("Authentication succeeded");
+                break;
+              }
+            }
+          } catch (error) {
+            new Notice(`Auth test failed: ${String(error)}`);
+          } finally {
+            button.setDisabled(false);
+          }
+        })
       );
 
     // Claude Max subscription info.
@@ -131,6 +186,16 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.autoApproveVaultWrites).onChange(async (value) => {
           this.plugin.settings.autoApproveVaultWrites = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Review edits with diff")
+      .setDesc("Show a unified diff before applying edits")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.reviewEditsWithDiff).onChange(async (value) => {
+          this.plugin.settings.reviewEditsWithDiff = value;
           await this.plugin.saveSettings();
         })
       );
@@ -200,6 +265,81 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
             if (!isNaN(parsed) && parsed > 0) {
               this.plugin.settings.maxTurns = parsed;
               await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show project controls panel")
+      .setDesc("Display model, budget, skills, and context controls above chat")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showProjectControlsPanel).onChange(async (value) => {
+          this.plugin.settings.showProjectControlsPanel = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Max pinned context characters")
+      .setDesc("Limit for pinned context injected into the prompt")
+      .addText((text) =>
+        text
+          .setPlaceholder("8000")
+          .setValue(String(this.plugin.settings.maxPinnedContextChars))
+          .onChange(async (value) => {
+            const parsed = parseInt(value, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+              this.plugin.settings.maxPinnedContextChars = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    // MCP servers section.
+    containerEl.createEl("h3", { text: "MCP Servers (Advanced)" });
+
+    const mcpInfo = containerEl.createDiv({ cls: "claude-code-mcp-info" });
+    mcpInfo.createEl("p", {
+      text: "Additional MCP servers require explicit approval before they are enabled.",
+    });
+
+    const mcpList = containerEl.createDiv({ cls: "claude-code-mcp-list" });
+    for (const server of this.plugin.settings.additionalMcpServers) {
+      const item = mcpList.createDiv({ cls: "claude-code-mcp-item" });
+      item.createSpan({ text: server.name });
+      const status = item.createSpan({ cls: "claude-code-mcp-status" });
+      const approved = this.plugin.settings.approvedMcpServers.includes(server.name);
+      status.setText(server.enabled ? (approved ? "enabled" : "needs approval") : "disabled");
+      const toggle = item.createEl("button", { text: approved ? "Revoke" : "Approve" });
+      toggle.addEventListener("click", async () => {
+        if (approved) {
+          this.plugin.settings.approvedMcpServers = this.plugin.settings.approvedMcpServers.filter(
+            (name) => name !== server.name
+          );
+        } else {
+          this.plugin.settings.approvedMcpServers.push(server.name);
+        }
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }
+
+    new Setting(containerEl)
+      .setName("Additional MCP servers JSON")
+      .setDesc("Edit the MCP server configuration array directly")
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('[{"name":"my-server","command":"node","args":["server.js"],"enabled":false}]')
+          .setValue(JSON.stringify(this.plugin.settings.additionalMcpServers, null, 2))
+          .onChange(async (value) => {
+            try {
+              const parsed = JSON.parse(value);
+              if (Array.isArray(parsed)) {
+                this.plugin.settings.additionalMcpServers = parsed;
+                await this.plugin.saveSettings();
+              }
+            } catch {
+              // Ignore invalid JSON until fixed.
             }
           })
       );

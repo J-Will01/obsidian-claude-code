@@ -208,6 +208,30 @@
   cursor: text;
 }
 
+.claude-code-tool-output-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.claude-code-tool-copy,
+.claude-code-tool-revert {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.claude-code-tool-output-block.stderr {
+  color: var(--text-error);
+}
+
+.claude-code-tool-diff pre {
+  background-color: var(--background-secondary);
+  padding: 6px;
+  border-radius: 4px;
+}
+
 /* Text selection highlight */
 .claude-code-message-content ::selection,
 .claude-code-tool-call-content ::selection {
@@ -223,6 +247,86 @@
 
 .claude-code-tool-call.collapsed .claude-code-tool-call-content {
   display: none;
+}
+
+/* Project Controls */
+.claude-code-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.claude-code-project-controls-container {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.claude-code-project-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.claude-code-project-controls-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.claude-code-project-controls-title {
+  font-weight: 600;
+}
+
+.claude-code-project-controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.claude-code-project-controls-row input,
+.claude-code-project-controls-row select {
+  max-width: 120px;
+}
+
+.claude-code-project-controls-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.claude-code-project-controls-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.claude-code-project-controls-actions button {
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.claude-code-project-controls-pinned {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Diff Modal */
+.claude-code-diff-modal .claude-code-diff-body {
+  margin: 12px 0;
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  border-radius: 6px;
+}
+
+.claude-code-diff-pre {
+  margin: 0;
+  padding: 10px;
+  font-size: 11px;
+  white-space: pre-wrap;
 }
 
 /* Quick Actions */

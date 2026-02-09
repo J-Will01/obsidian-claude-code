@@ -1,6 +1,6 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type ClaudeCodePlugin from "../main";
-import { Conversation, ChatMessage } from "../types";
+import { Conversation, ChatMessage, MessageContext } from "../types";
 import { logger } from "../utils/Logger";
 import { generateTitleWithHaiku } from "../utils/formatting";
 import { findClaudeExecutable } from "../utils/claudeExecutable";
@@ -14,6 +14,7 @@ const HISTORY_DIR = "history";
 interface StoredConversation extends Conversation {
   history: MessageParam[];
   displayMessages: ChatMessage[];
+  pinnedContext?: MessageContext[];
 }
 
 // Index of all conversations.
@@ -118,6 +119,7 @@ export class ConversationManager {
         totalTokens: 0,
         totalCostUsd: 0,
       },
+      pinnedContext: [],
       history: [],
       displayMessages: [],
     };
@@ -159,6 +161,7 @@ export class ConversationManager {
 
       const content = await vault.adapter.read(path);
       const conversation = JSON.parse(content) as StoredConversation;
+      conversation.pinnedContext = conversation.pinnedContext ?? [];
       this.currentConversation = conversation;
       this.index.activeConversationId = id;
       await this.saveIndex();
@@ -273,6 +276,29 @@ export class ConversationManager {
   // Get the current conversation.
   getCurrentConversation(): StoredConversation | null {
     return this.currentConversation;
+  }
+
+  getPinnedContext(): MessageContext[] {
+    return this.currentConversation?.pinnedContext ?? [];
+  }
+
+  async setPinnedContext(context: MessageContext[]) {
+    if (!this.currentConversation) return;
+    this.currentConversation.pinnedContext = context;
+    await this.saveConversation(this.currentConversation);
+  }
+
+  async addPinnedContext(context: MessageContext) {
+    if (!this.currentConversation) return;
+    this.currentConversation.pinnedContext = this.currentConversation.pinnedContext ?? [];
+    this.currentConversation.pinnedContext.push(context);
+    await this.saveConversation(this.currentConversation);
+  }
+
+  async clearPinnedContext() {
+    if (!this.currentConversation) return;
+    this.currentConversation.pinnedContext = [];
+    await this.saveConversation(this.currentConversation);
   }
 
   // Get the message history for the API.
@@ -429,7 +455,7 @@ export class ConversationManager {
 
     try {
       // Get API key, Claude executable path, and vault path from plugin.
-      const apiKey = this.plugin.settings.apiKey || process.env.ANTHROPIC_API_KEY;
+      const apiKey = this.plugin.getApiKey() || process.env.ANTHROPIC_API_KEY;
       const claudeExecutable = findClaudeExecutable();
       const vaultPath = (this.plugin.app.vault.adapter as any).basePath || process.cwd();
 

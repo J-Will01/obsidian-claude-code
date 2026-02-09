@@ -1,4 +1,12 @@
-import { query, SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, SDKPartialAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  SDKAssistantMessage,
+  SDKResultMessage,
+  SDKPartialAssistantMessage,
+  SDKUserMessage,
+  SDKToolProgressMessage,
+  SDKHookResponseMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { App } from "obsidian";
 import * as path from "path";
 import type ClaudeCodePlugin from "../main";
@@ -6,6 +14,9 @@ import { ChatMessage, ToolCall, AgentEvents, SubagentProgress, ErrorType } from 
 import { createObsidianMcpServer, ObsidianMcpServerInstance } from "./ObsidianMcpServer";
 import { logger } from "../utils/Logger";
 import { requireClaudeExecutable } from "../utils/claudeExecutable";
+import { StreamingAccumulator } from "../utils/StreamingAccumulator";
+import { applyNormalizedToolResult, normalizeToolResult } from "../utils/ToolResultNormalizer";
+import { applyMultiEdit, applySimpleEdit, createBackup, createUnifiedDiff } from "../utils/DiffEngine";
 
 // Type for content blocks from the SDK.
 interface TextBlock {
@@ -66,6 +77,10 @@ export class AgentController {
   // Track current tool calls for subagent matching.
   private currentToolCalls: ToolCall[] = [];
 
+  private streamingAccumulator = new StreamingAccumulator();
+  private pendingToolEdits: Map<string, { filePath: string; diff: string; backupPath?: string }> = new Map();
+  private activeConversationId: string | null = null;
+
   constructor(plugin: ClaudeCodePlugin) {
     this.plugin = plugin;
     this.app = plugin.app;
@@ -81,6 +96,10 @@ export class AgentController {
   // Set event handlers for UI updates.
   setEventHandlers(events: Partial<AgentEvents>) {
     this.events = events;
+  }
+
+  setActiveConversationId(conversationId: string | null) {
+    this.activeConversationId = conversationId;
   }
 
   // Send a message with automatic retry for transient errors.
@@ -134,8 +153,9 @@ export class AgentController {
     try {
       // Build environment with API key and base URL if set in settings.
       const env: Record<string, string | undefined> = { ...process.env };
-      if (this.plugin.settings.apiKey) {
-        env.ANTHROPIC_API_KEY = this.plugin.settings.apiKey;
+      const apiKey = this.plugin.getApiKey();
+      if (apiKey) {
+        env.ANTHROPIC_API_KEY = apiKey;
         logger.debug("AgentController", "Using API key from settings");
       }
       if (this.plugin.settings.baseUrl) {
@@ -186,15 +206,15 @@ export class AgentController {
           tools: { type: "preset", preset: "claude_code" },
 
           // Add our Obsidian-specific tools.
-          mcpServers: {
-            obsidian: this.obsidianMcp,
-          },
+          mcpServers: this.buildMcpServers(),
 
           // Include streaming updates for real-time UI.
           includePartialMessages: true,
 
           // Budget limit from settings.
           maxBudgetUsd: this.plugin.settings.maxBudgetPerSession,
+
+          maxTurns: this.plugin.settings.maxTurns,
 
           // Resume session if available.
           resume: this.sessionId ?? undefined,
@@ -219,33 +239,16 @@ export class AgentController {
         } else if (message.type === "stream_event") {
           // Handle streaming partial messages for real-time UI updates.
           this.handleStreamEvent(message, messageId);
+        } else if (message.type === "user") {
+          this.handleUserToolResultMessage(message as SDKUserMessage);
+        } else if (message.type === "tool_progress") {
+          this.handleToolProgress(message as SDKToolProgressMessage);
+        } else if (message.type === "system" && message.subtype === "hook_response") {
+          this.handleHookResponse(message as SDKHookResponseMessage);
         } else if (message.type === "assistant") {
           // Handle complete assistant messages.
           const assistantMsg = message as SDKAssistantMessage;
           const { text, tools } = this.processAssistantMessage(assistantMsg);
-
-          // If we have existing tool calls and receive a new assistant message with text,
-          // the tools must have completed (SDK executes tools between assistant turns).
-          if (text && toolCalls.length > 0) {
-            for (const tc of toolCalls) {
-              if (tc.status === "running") {
-                tc.status = "success";
-                tc.endTime = Date.now();
-
-                // Handle subagent completion.
-                if (tc.isSubagent) {
-                  tc.subagentStatus = "completed";
-                  if (tc.subagentProgress) {
-                    tc.subagentProgress.message = "Completed";
-                    tc.subagentProgress.lastUpdate = Date.now();
-                  }
-                  this.events.onSubagentStop?.(tc.id, true, undefined);
-                }
-
-                this.events.onToolResult?.(tc.id, "", false);
-              }
-            }
-          }
 
           // Only update content if there's new text (preserves previous text when tool-only messages arrive).
           if (text) {
@@ -288,15 +291,13 @@ export class AgentController {
               }
             }
 
-            // Emit final message update with completed tool statuses.
-            this.events.onMessage?.({
-              id: messageId,
-              role: "assistant",
-              content: finalContent,
-              timestamp: Date.now(),
-              toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-              isStreaming: false,
-            });
+            const finalMessage = this.streamingAccumulator.finalize(
+              messageId,
+              finalContent,
+              toolCalls,
+              Date.now()
+            );
+            this.events.onMessage?.(finalMessage);
           } else {
             // Handle errors.
             logger.error("AgentController", "Query failed", { subtype: resultMsg.subtype, result: resultMsg });
@@ -319,15 +320,13 @@ export class AgentController {
               }
             }
 
-            // Emit error state update.
-            this.events.onMessage?.({
-              id: messageId,
-              role: "assistant",
-              content: finalContent,
-              timestamp: Date.now(),
-              toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
-              isStreaming: false,
-            });
+            const finalMessage = this.streamingAccumulator.finalize(
+              messageId,
+              finalContent,
+              toolCalls,
+              Date.now()
+            );
+            this.events.onMessage?.(finalMessage);
 
             const errors = (resultMsg as any).errors || [];
             if (errors.length > 0) {
@@ -380,6 +379,20 @@ export class AgentController {
           startTime: Date.now(),
         };
 
+        const filePath = this.getFilePathFromToolInput(block.name, block.input as Record<string, unknown>);
+        if (filePath) {
+          toolCall.filePath = filePath;
+        }
+
+        const pendingKey = this.buildToolEditKey(block.name, block.input as Record<string, unknown>);
+        const pending = this.pendingToolEdits.get(pendingKey);
+        if (pending) {
+          toolCall.diff = pending.diff;
+          toolCall.backupPath = pending.backupPath;
+          toolCall.filePath = pending.filePath;
+          this.pendingToolEdits.delete(pendingKey);
+        }
+
         // Detect Task tools and initialize subagent tracking.
         if (block.name === "Task") {
           const input = block.input as Record<string, unknown>;
@@ -418,11 +431,63 @@ export class AgentController {
   private handleStreamEvent(message: SDKPartialAssistantMessage, messageId: string) {
     const event = message.event;
 
-    if (event.type === "content_block_delta") {
-      if ((event.delta as any).type === "text_delta") {
-        // Text is being streamed - we'll get full content in assistant message.
-      }
+    const update = this.streamingAccumulator.updateFromStreamEvent(messageId, event);
+    if (update) {
+      this.events.onMessage?.(update);
     }
+  }
+
+  private handleUserToolResultMessage(message: SDKUserMessage) {
+    const content = message.message?.content;
+    if (!Array.isArray(content)) {
+      if (message.tool_use_result && message.parent_tool_use_id) {
+        const toolCall = this.currentToolCalls.find((tc) => tc.id === message.parent_tool_use_id);
+        if (toolCall) {
+          const normalized = normalizeToolResult(toolCall.name, message.tool_use_result);
+          applyNormalizedToolResult(toolCall, normalized);
+          toolCall.status = "success";
+          toolCall.endTime = Date.now();
+          this.events.onToolResult?.(toolCall.id, normalized.output ?? "", false);
+        }
+      }
+      return;
+    }
+
+    for (const block of content as any[]) {
+      if (block?.type !== "tool_result") continue;
+      const toolCall = this.currentToolCalls.find((tc) => tc.id === block.tool_use_id);
+      if (!toolCall) continue;
+
+      const normalized = normalizeToolResult(toolCall.name, block.content ?? message.tool_use_result);
+      applyNormalizedToolResult(toolCall, normalized);
+
+      toolCall.status = block.is_error ? "error" : "success";
+      toolCall.endTime = Date.now();
+      if (block.is_error) {
+        toolCall.error = normalized.output ?? "Tool error";
+      }
+
+      this.events.onToolResult?.(toolCall.id, normalized.output ?? "", !!block.is_error);
+    }
+  }
+
+  private handleToolProgress(message: SDKToolProgressMessage) {
+    const toolCall = this.currentToolCalls.find((tc) => tc.id === message.tool_use_id);
+    if (!toolCall) return;
+    toolCall.durationMs = Math.round(message.elapsed_time_seconds * 1000);
+  }
+
+  private handleHookResponse(message: SDKHookResponseMessage) {
+    const toolCall = this.currentToolCalls.find((tc) => tc.name === "Bash" && tc.status === "running");
+    if (!toolCall) return;
+
+    const normalized = normalizeToolResult("Bash", {
+      stdout: message.stdout,
+      stderr: message.stderr,
+      exit_code: message.exit_code,
+    });
+    applyNormalizedToolResult(toolCall, normalized);
+    toolCall.endTime = Date.now();
   }
 
   // Handle permission requests.
@@ -467,7 +532,39 @@ export class AgentController {
     // Check settings for file write operations.
     const writeTools = ["Write", "Edit", "MultiEdit"];
     if (writeTools.includes(toolName)) {
+      const shouldReviewDiff =
+        this.plugin.settings.reviewEditsWithDiff || !this.plugin.settings.autoApproveVaultWrites;
+
+      if (shouldReviewDiff) {
+        const diffResult = await this.buildDiffForTool(toolName, input);
+        if (diffResult) {
+          const diffApproval = await this.showDiffApprovalModal(toolName, input, diffResult.diff, diffResult.description);
+          if (diffApproval.approved) {
+            await this.handlePermissionChoice(toolName, diffApproval.choice);
+            if (diffResult.backupPath) {
+              const key = this.buildToolEditKey(toolName, input);
+              this.pendingToolEdits.set(key, {
+                filePath: diffResult.filePath,
+                diff: diffResult.diff,
+                backupPath: diffResult.backupPath,
+              });
+            }
+            return { behavior: "allow", updatedInput: input };
+          }
+          return { behavior: "deny", message: "User denied file write permission" };
+        }
+      }
+
       if (this.plugin.settings.autoApproveVaultWrites) {
+        const diffResult = await this.buildDiffForTool(toolName, input);
+        if (diffResult?.backupPath) {
+          const key = this.buildToolEditKey(toolName, input);
+          this.pendingToolEdits.set(key, {
+            filePath: diffResult.filePath,
+            diff: diffResult.diff,
+            backupPath: diffResult.backupPath,
+          });
+        }
         return { behavior: "allow", updatedInput: input };
       }
       // Check if already approved for this session.
@@ -558,6 +655,70 @@ export class AgentController {
     });
   }
 
+  private showDiffApprovalModal(
+    toolName: string,
+    input: any,
+    diffText: string,
+    description: string
+  ): Promise<{ approved: boolean; choice: "once" | "session" | "always" }> {
+    return new Promise((resolve) => {
+      const { DiffApprovalModal } = require("../views/DiffApprovalModal");
+      const modal = new DiffApprovalModal(
+        this.app,
+        diffText,
+        description,
+        (choice: "once" | "session" | "always") => resolve({ approved: true, choice }),
+        () => resolve({ approved: false, choice: "once" })
+      );
+      modal.open();
+    });
+  }
+
+  private async buildDiffForTool(toolName: string, input: Record<string, unknown>) {
+    const filePath = this.getFilePathFromToolInput(toolName, input);
+    if (!filePath) return null;
+
+    const adapter = this.app.vault.adapter;
+    const exists = await adapter.exists(filePath);
+    const oldText = exists ? await adapter.read(filePath) : "";
+
+    let newText: string | null = null;
+    if (toolName === "Write") {
+      const content = (input.content as string) ?? (input.text as string);
+      if (typeof content === "string") {
+        newText = content;
+      }
+    } else if (toolName === "Edit") {
+      const oldString = input.old_string as string;
+      const newString = input.new_string as string;
+      if (typeof oldString === "string" && typeof newString === "string") {
+        newText = applySimpleEdit(oldText, {
+          old_string: oldString,
+          new_string: newString,
+          replace_all: Boolean(input.replace_all),
+        });
+      }
+    } else if (toolName === "MultiEdit") {
+      const edits = input.edits as Array<{ old_string: string; new_string: string; replace_all?: boolean }>;
+      if (Array.isArray(edits)) {
+        newText = applyMultiEdit(oldText, edits);
+      }
+    }
+
+    if (newText === null) return null;
+
+    const diff = createUnifiedDiff(filePath, oldText, newText);
+    const conversationId = this.activeConversationId ?? "unknown";
+    const backupPath = await createBackup(this.app.vault, conversationId, filePath, oldText);
+
+    return {
+      filePath,
+      diff,
+      backupPath,
+      description: `Claude wants to update ${filePath}. Review the diff before applying.`,
+    };
+  }
+
   // Handle SubagentStart hook event.
   private handleSubagentStart(event: any) {
     const { subagent_id, subagent_type, task_description } = event;
@@ -630,6 +791,38 @@ export class AgentController {
     }
   }
 
+  private getFilePathFromToolInput(toolName: string, input: Record<string, unknown>): string | null {
+    if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
+      const pathValue = (input.file_path as string) ?? (input.path as string);
+      return typeof pathValue === "string" ? pathValue : null;
+    }
+    return null;
+  }
+
+  private buildToolEditKey(toolName: string, input: Record<string, unknown>): string {
+    const filePath = this.getFilePathFromToolInput(toolName, input) ?? "unknown";
+    return `${toolName}:${filePath}:${JSON.stringify(input)}`;
+  }
+
+  private buildMcpServers() {
+    const servers: Record<string, any> = {
+      obsidian: this.obsidianMcp,
+    };
+
+    for (const server of this.plugin.settings.additionalMcpServers) {
+      if (!server.enabled) continue;
+      if (!this.plugin.settings.approvedMcpServers.includes(server.name)) continue;
+      servers[server.name] = {
+        type: "stdio",
+        command: server.command,
+        args: server.args,
+        env: server.env,
+      };
+    }
+
+    return servers;
+  }
+
   // Find a Task tool call that matches a subagent by description or type.
   private findToolCallForSubagent(description?: string, subagentType?: string): ToolCall | undefined {
     // Look for Task tool calls that are in "starting" state (not yet matched).
@@ -698,7 +891,7 @@ export class AgentController {
   // Check if the client is ready (has some form of authentication).
   isReady(): boolean {
     return !!(
-      this.plugin.settings.apiKey ||
+      this.plugin.getApiKey() ||
       process.env.ANTHROPIC_API_KEY ||
       process.env.CLAUDE_CODE_OAUTH_TOKEN
     );

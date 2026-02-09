@@ -9,6 +9,7 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
 
   const defaultSettings: MockPluginSettings = {
     apiKey: "test-api-key",
+    baseUrl: "",
     model: "sonnet",
     maxTokens: 4096,
     systemPrompt: "",
@@ -16,9 +17,18 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     enableSkills: true,
     // AgentController settings.
     maxBudgetPerSession: 5.0,
+    maxTurns: 10,
     autoApproveVaultWrites: true,
     requireBashApproval: false,
+    reviewEditsWithDiff: false,
     alwaysAllowedTools: [],
+    storeApiKeyInKeychain: false,
+    autoApproveVaultReads: true,
+    sidebarWidth: 400,
+    showProjectControlsPanel: true,
+    maxPinnedContextChars: 8000,
+    additionalMcpServers: [],
+    approvedMcpServers: [],
   };
 
   // Extract settings from overrides to merge separately.
@@ -40,12 +50,14 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     loadData: vi.fn().mockResolvedValue({}),
     saveData: vi.fn().mockResolvedValue(undefined),
     saveSettings: vi.fn().mockResolvedValue(undefined),
+    getApiKey: vi.fn().mockReturnValue((settingsOverrides?.apiKey ?? defaultSettings.apiKey)),
     ...otherOverrides,
   };
 }
 
 export interface MockPluginSettings {
   apiKey: string;
+  baseUrl: string;
   model: string;
   maxTokens: number;
   systemPrompt: string;
@@ -53,9 +65,18 @@ export interface MockPluginSettings {
   enableSkills: boolean;
   // AgentController settings.
   maxBudgetPerSession: number;
+  maxTurns: number;
   autoApproveVaultWrites: boolean;
   requireBashApproval: boolean;
+  reviewEditsWithDiff: boolean;
   alwaysAllowedTools: string[];
+  storeApiKeyInKeychain: boolean;
+  autoApproveVaultReads: boolean;
+  sidebarWidth: number;
+  showProjectControlsPanel: boolean;
+  maxPinnedContextChars: number;
+  additionalMcpServers: { name: string; command: string; args: string[]; env?: Record<string, string>; enabled: boolean }[];
+  approvedMcpServers: string[];
 }
 
 export interface MockPlugin {
@@ -74,6 +95,7 @@ export interface MockPlugin {
   loadData: ReturnType<typeof vi.fn>;
   saveData: ReturnType<typeof vi.fn>;
   saveSettings: ReturnType<typeof vi.fn>;
+  getApiKey: ReturnType<typeof vi.fn>;
 }
 
 // Create a mock conversation.

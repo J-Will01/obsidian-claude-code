@@ -36,7 +36,7 @@ Then enable the plugin: Obsidian Settings → Community Plugins → obsidian-cla
 
 The plugin supports three authentication methods.
 
-**API Key in Settings.** The simplest option. Open Settings → Claude Code and enter your Anthropic API key. The key is stored locally in Obsidian's plugin data directory.
+**API Key in Settings.** The simplest option. Open Settings → Claude Code and enter your Anthropic API key. You can store the key in the OS keychain when supported.
 
 **Environment Variable.** Set `ANTHROPIC_API_KEY` in your shell environment. The plugin reads it automatically.
 
@@ -56,7 +56,9 @@ Toggle the sidebar with the ribbon icon or `Cmd+Shift+C`. Type your message and 
 
 Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context.
 
-When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Write operations display a permission modal unless you've enabled auto-approve in settings.
+When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
+
+The Project Controls panel (toggleable in settings) exposes model/budget/turn limits, auth status, active skills, MCP servers, and quick actions for pinning context like the active file or a text selection.
 
 ## Tools and Skills
 
@@ -73,6 +75,8 @@ The plugin also exposes Obsidian-specific tools through an MCP server:
 - `reveal_in_explorer` — Show a file in the file explorer
 - `get_vault_stats` — Query vault statistics
 - `get_recent_files` — List recently modified files
+
+Advanced users can add additional MCP servers in settings (stdio-based configs) and approve them per server.
 
 ### Skills
 
@@ -99,6 +103,8 @@ Conversations are stored in `.obsidian-claude-code/` at your vault root:
 
 Add this directory to `.gitignore` if you don't want to sync conversation history.
 
+Backups for diff-reviewed edits are stored under `.obsidian-claude-code/backups/{conversationId}/` and are used by the Revert button in tool call blocks.
+
 ## Development
 
 ```bash
@@ -108,6 +114,14 @@ make check       # typecheck + lint + test
 ```
 
 Debug logs are written to `~/.obsidian-claude-code/debug.log`.
+
+## New Settings (UX Parity)
+
+- **Streaming updates:** real-time partial response rendering.
+- **Review edits with diff:** show unified diffs and allow revert from backup.
+- **Project Controls panel:** model/budget/turns/auth/skills + context pinning actions.
+- **Keychain storage:** store API keys in the OS keychain when supported.
+- **Additional MCP servers:** add/approve extra MCP server configs via JSON.
 
 ## License
 

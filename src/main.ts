@@ -3,10 +3,12 @@ import { ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE } from "./types";
 import { ChatView } from "./views/ChatView";
 import { ClaudeCodeSettingTab } from "./settings/SettingsTab";
 import { logger } from "./utils/Logger";
+import { deleteKeychainApiKey, getKeychainApiKey, isKeytarAvailable, setKeychainApiKey } from "./utils/Keychain";
 
 export default class ClaudeCodePlugin extends Plugin {
   settings: ClaudeCodeSettings = DEFAULT_SETTINGS;
   private readonly MAX_CHAT_WINDOWS = 5;
+  private runtimeApiKey = "";
 
   async onload() {
     await this.loadSettings();
@@ -86,10 +88,22 @@ export default class ClaudeCodePlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (this.settings.storeApiKeyInKeychain) {
+      const key = await getKeychainApiKey();
+      if (key) {
+        this.runtimeApiKey = key;
+      }
+    } else {
+      this.runtimeApiKey = this.settings.apiKey;
+    }
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    const data = { ...this.settings };
+    if (this.settings.storeApiKeyInKeychain) {
+      data.apiKey = "";
+    }
+    await this.saveData(data);
   }
 
   // Get existing chat leaf if any.
@@ -197,10 +211,82 @@ export default class ClaudeCodePlugin extends Plugin {
   // Check if authentication is configured (API key or env vars).
   isApiKeyConfigured(): boolean {
     return !!(
-      this.settings.apiKey ||
+      this.getApiKey() ||
       process.env.ANTHROPIC_API_KEY ||
       process.env.CLAUDE_CODE_OAUTH_TOKEN
     );
+  }
+
+  getApiKey(): string {
+    return this.settings.storeApiKeyInKeychain ? this.runtimeApiKey : this.settings.apiKey;
+  }
+
+  async setApiKey(value: string) {
+    this.runtimeApiKey = value;
+    if (this.settings.storeApiKeyInKeychain) {
+      if (!isKeytarAvailable()) {
+        new Notice("Keytar not available. Falling back to settings storage.");
+        this.settings.storeApiKeyInKeychain = false;
+        this.settings.apiKey = value;
+        await this.saveSettings();
+        return;
+      }
+      await setKeychainApiKey(value);
+      await this.saveSettings();
+      return;
+    }
+    this.settings.apiKey = value;
+    await this.saveSettings();
+  }
+
+  async toggleKeychainStorage(enabled: boolean) {
+    if (enabled) {
+      if (!isKeytarAvailable()) {
+        new Notice("Keytar not available. Install keytar to enable keychain storage.");
+        return;
+      }
+      this.settings.storeApiKeyInKeychain = true;
+      if (this.runtimeApiKey) {
+        await setKeychainApiKey(this.runtimeApiKey);
+      }
+      await this.saveSettings();
+    } else {
+      this.settings.storeApiKeyInKeychain = false;
+      if (this.runtimeApiKey) {
+        this.settings.apiKey = this.runtimeApiKey;
+      }
+      await deleteKeychainApiKey();
+      await this.saveSettings();
+    }
+  }
+
+  getAuthStatus() {
+    const hasOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const hasEnvApiKey = !!process.env.ANTHROPIC_API_KEY;
+    const hasStoredApiKey = !!this.getApiKey();
+    const source = hasOAuthToken
+      ? "oauth"
+      : hasEnvApiKey
+        ? "env"
+        : hasStoredApiKey
+          ? this.settings.storeApiKeyInKeychain
+            ? "keychain"
+            : "settings"
+          : "none";
+    const labelMap: Record<string, string> = {
+      oauth: "OAuth",
+      env: "Env",
+      keychain: "Keychain",
+      settings: "Settings",
+      none: "Missing",
+    };
+    return {
+      hasOAuthToken,
+      hasEnvApiKey,
+      hasStoredApiKey,
+      source,
+      label: labelMap[source] || "Unknown",
+    };
   }
 
   // Get the vault path.
