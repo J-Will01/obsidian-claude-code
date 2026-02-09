@@ -205,7 +205,7 @@ export class MessageRenderer {
 
     for (const toolCall of this.message.toolCalls || []) {
       const toolCallEl = toolCallsContainer.createDiv();
-      const display = new ToolCallDisplay(toolCallEl, toolCall);
+      const display = new ToolCallDisplay(toolCallEl, toolCall, this.plugin);
       display.render();
       this.toolCallDisplays.set(toolCall.id, display);
     }

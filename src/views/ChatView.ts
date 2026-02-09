@@ -7,6 +7,7 @@ import { AgentController, classifyError } from "../agent/AgentController";
 import { ConversationManager } from "../agent/ConversationManager";
 import { ConversationHistoryModal } from "./ConversationHistoryModal";
 import { logger } from "../utils/Logger";
+import { ProjectControls } from "./components/ProjectControls";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -15,6 +16,7 @@ export class ChatView extends ItemView {
   private inputContainerEl!: HTMLElement;
   private messageList!: MessageList;
   private chatInput!: ChatInput;
+  private projectControls: ProjectControls | null = null;
   private messages: ChatMessage[] = [];
   private isStreaming = false;
   private agentController: AgentController;
@@ -336,6 +338,7 @@ export class ChatView extends ItemView {
       // Update tab title and header.
       (this.leaf as any).updateHeader?.();
       this.updateConversationDisplay();
+      this.refreshProjectControls();
       logger.info("ChatView", "loadConversation rendered", { messageCount: this.messages.length });
     } else {
       logger.error("ChatView", "loadConversation failed - conversation not found", { id });
@@ -353,8 +356,26 @@ export class ChatView extends ItemView {
     }
   }
 
+  private refreshProjectControls() {
+    this.projectControls?.render();
+  }
+
   private renderMessagesArea() {
-    this.messagesContainerEl = this.contentEl.createDiv({ cls: "claude-code-messages" });
+    const bodyEl = this.contentEl.createDiv({ cls: "claude-code-body" });
+    if (this.plugin.settings.showProjectControlsPanel) {
+      const controlsEl = bodyEl.createDiv({ cls: "claude-code-project-controls-container" });
+      this.projectControls = new ProjectControls({
+        containerEl: controlsEl,
+        app: this.app,
+        plugin: this.plugin,
+        conversationManager: this.conversationManager,
+        onResetSession: () => this.resetSession(),
+        onOpenLogs: () => this.openLogs(),
+      });
+      this.projectControls.render();
+    }
+
+    this.messagesContainerEl = bodyEl.createDiv({ cls: "claude-code-messages" });
     this.messageList = new MessageList(this.messagesContainerEl, this.plugin);
 
     if (this.messages.length === 0) {
@@ -398,6 +419,7 @@ export class ChatView extends ItemView {
 
     // Store for retry functionality.
     this.lastUserMessage = content.trim();
+    const shouldPin = this.isNearBottom();
 
     // Add user message to UI.
     const userMessage: ChatMessage = {
@@ -423,10 +445,16 @@ export class ChatView extends ItemView {
 
     // Clear empty state and render.
     logger.debug("ChatView", "Rendering messages");
-    this.messagesContainerEl.empty();
-    this.messageList = new MessageList(this.messagesContainerEl, this.plugin);
-    this.messageList.render(this.messages);
-    this.scrollToBottom();
+    if (this.messagesContainerEl.querySelector(".claude-code-empty-state")) {
+      this.messagesContainerEl.empty();
+      this.messageList = new MessageList(this.messagesContainerEl, this.plugin);
+      this.messageList.render(this.messages);
+    } else {
+      this.messageList.addMessage(userMessage);
+    }
+    if (shouldPin) {
+      this.scrollToBottom();
+    }
 
     // Start streaming.
     this.isStreaming = true;
@@ -443,19 +471,22 @@ export class ChatView extends ItemView {
     };
     this.messages.push(placeholderMessage);
     this.streamingMessageId = placeholderId;
-    this.messageList.render(this.messages);
-    this.scrollToBottom();
+    this.messageList.addMessage(placeholderMessage);
+    if (shouldPin) {
+      this.scrollToBottom();
+    }
 
     // Capture current conversation ID for this stream (for background streaming support).
     const currentConv = this.conversationManager.getCurrentConversation();
     this.activeStreamConversationId = currentConv?.id || null;
+    this.agentController.setActiveConversationId(this.activeStreamConversationId);
     const streamConvId = this.activeStreamConversationId;
     const streamMsgId = this.streamingMessageId;
 
     logger.info("ChatView", "Calling agentController.sendMessage", { streamConvId });
     try {
       // Send to agent and get response.
-      const response = await this.agentController.sendMessage(content.trim());
+      const response = await this.agentController.sendMessage(this.buildPromptWithPinnedContext(content.trim()));
 
       // Save to the conversation that started the stream (may be different from current if user switched).
       if (streamConvId) {
@@ -469,6 +500,7 @@ export class ChatView extends ItemView {
       // Only update UI if we're still viewing the same conversation.
       const nowCurrentConv = this.conversationManager.getCurrentConversation();
       if (nowCurrentConv?.id === streamConvId) {
+        const shouldPinFinal = this.isNearBottom();
         const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
         if (streamingIndex !== -1) {
           this.messages[streamingIndex] = response;
@@ -476,7 +508,9 @@ export class ChatView extends ItemView {
           this.messages.push(response);
         }
         this.messageList.render(this.messages);
-        this.scrollToBottom();
+        if (shouldPinFinal) {
+          this.scrollToBottom();
+        }
       } else {
         logger.info("ChatView", "Stream completed but user switched conversations", {
           streamConvId,
@@ -511,26 +545,51 @@ export class ChatView extends ItemView {
     }
   }
 
+  private buildPromptWithPinnedContext(content: string): string {
+    const contexts = this.conversationManager.getPinnedContext();
+    if (contexts.length === 0) return content;
+
+    const maxChars = this.plugin.settings.maxPinnedContextChars;
+    const blocks: string[] = [];
+    let total = 0;
+
+    for (const context of contexts) {
+      const block = `### ${context.label}\n${context.content}`;
+      if (total + block.length > maxChars) {
+        const remaining = Math.max(0, maxChars - total);
+        blocks.push(block.slice(0, remaining));
+        break;
+      }
+      blocks.push(block);
+      total += block.length;
+    }
+
+    return `Pinned context:\n${blocks.join("\n\n")}\n\n---\n\n${content}`;
+  }
+
   private handleStreamingMessage(message: ChatMessage) {
     // Only update UI if we're still viewing the same conversation that owns the stream.
     const currentConv = this.conversationManager.getCurrentConversation();
     if (currentConv?.id !== this.activeStreamConversationId) {
       return; // Stream is for a different conversation, don't update UI.
     }
+    const shouldPin = this.isNearBottom();
 
     // Update or add streaming message.
     if (this.streamingMessageId) {
       const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
       if (index !== -1) {
         this.messages[index] = { ...message, id: this.streamingMessageId };
+        this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
       }
     } else {
       this.streamingMessageId = message.id;
       this.messages.push(message);
+      this.messageList.addMessage(message);
     }
-
-    this.messageList.render(this.messages);
-    this.scrollToBottom();
+    if (shouldPin) {
+      this.scrollToBottom();
+    }
   }
 
   private handleToolCall(toolCall: ToolCall) {
@@ -539,6 +598,8 @@ export class ChatView extends ItemView {
     if (currentConv?.id !== this.activeStreamConversationId) {
       return;
     }
+
+    const shouldPin = this.isNearBottom();
 
     // Add tool call to current streaming message.
     if (this.streamingMessageId) {
@@ -551,8 +612,10 @@ export class ChatView extends ItemView {
         const existing = this.messages[index].toolCalls!.find((t) => t.id === toolCall.id);
         if (!existing) {
           this.messages[index].toolCalls!.push(toolCall);
-          this.messageList.render(this.messages);
-          this.scrollToBottom();
+          this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
+          if (shouldPin) {
+            this.scrollToBottom();
+          }
         }
       }
     }
@@ -564,6 +627,8 @@ export class ChatView extends ItemView {
     if (currentConv?.id !== this.activeStreamConversationId) {
       return;
     }
+
+    const shouldPin = this.isNearBottom();
 
     // Update tool call status.
     if (this.streamingMessageId) {
@@ -577,7 +642,10 @@ export class ChatView extends ItemView {
           if (isError) {
             toolCall.error = result;
           }
-          this.messageList.render(this.messages);
+          this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
+          if (shouldPin) {
+            this.scrollToBottom();
+          }
         }
       }
     }
@@ -597,8 +665,11 @@ export class ChatView extends ItemView {
           toolCall.subagentProgress.message = `${subagentType} agent running...`;
           toolCall.subagentProgress.lastUpdate = Date.now();
         }
-        this.messageList.render(this.messages);
-        this.scrollToBottom();
+        const shouldPin = this.isNearBottom();
+        this.messageList.updateMessage(message.id, message);
+        if (shouldPin) {
+          this.scrollToBottom();
+        }
       }
     }
   }
@@ -619,7 +690,7 @@ export class ChatView extends ItemView {
           toolCall.subagentProgress.message = success ? "Completed" : `Error: ${error || "Unknown error"}`;
           toolCall.subagentProgress.lastUpdate = Date.now();
         }
-        this.messageList.render(this.messages);
+        this.messageList.updateMessage(message.id, message);
       }
     }
   }
@@ -660,6 +731,17 @@ export class ChatView extends ItemView {
     this.isStreaming = false;
     this.streamingMessageId = null;
     this.chatInput.updateState();
+  }
+
+  private resetSession() {
+    this.agentController.clearHistory();
+    this.startNewConversation();
+  }
+
+  private openLogs() {
+    const logPath = logger.getLogPath();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (this.app as any).openWithDefaultApp?.(logPath);
   }
 
   private showError(error: Error) {
@@ -743,6 +825,7 @@ export class ChatView extends ItemView {
     // Start streaming.
     this.isStreaming = true;
     this.chatInput.updateState();
+    const shouldPin = this.isNearBottom();
 
     // Show "thinking" placeholder.
     const placeholderId = this.generateId();
@@ -756,16 +839,19 @@ export class ChatView extends ItemView {
     this.messages.push(placeholderMessage);
     this.streamingMessageId = placeholderId;
     this.messageList.render(this.messages);
-    this.scrollToBottom();
+    if (shouldPin) {
+      this.scrollToBottom();
+    }
 
     // Capture current conversation ID.
     const currentConv = this.conversationManager.getCurrentConversation();
     this.activeStreamConversationId = currentConv?.id || null;
+    this.agentController.setActiveConversationId(this.activeStreamConversationId);
     const streamConvId = this.activeStreamConversationId;
     const streamMsgId = this.streamingMessageId;
 
     try {
-      const response = await this.agentController.sendMessage(content);
+      const response = await this.agentController.sendMessage(this.buildPromptWithPinnedContext(content));
 
       // Save to the conversation that started the stream.
       if (streamConvId) {
@@ -779,6 +865,7 @@ export class ChatView extends ItemView {
       // Only update UI if we're still viewing the same conversation.
       const nowCurrentConv = this.conversationManager.getCurrentConversation();
       if (nowCurrentConv?.id === streamConvId) {
+        const shouldPinFinal = this.isNearBottom();
         const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
         if (streamingIndex !== -1) {
           this.messages[streamingIndex] = response;
@@ -786,7 +873,9 @@ export class ChatView extends ItemView {
           this.messages.push(response);
         }
         this.messageList.render(this.messages);
-        this.scrollToBottom();
+        if (shouldPinFinal) {
+          this.scrollToBottom();
+        }
       }
     } catch (error) {
       const errorMessage = String(error);
@@ -841,6 +930,7 @@ export class ChatView extends ItemView {
     // Update tab title and header.
     (this.leaf as any).updateHeader?.();
     this.updateConversationDisplay();
+    this.refreshProjectControls();
   }
 
   private async showHistory() {
@@ -890,5 +980,10 @@ export class ChatView extends ItemView {
 
   scrollToBottom() {
     this.messagesContainerEl.scrollTop = this.messagesContainerEl.scrollHeight;
+  }
+
+  private isNearBottom(threshold = 160): boolean {
+    const { scrollTop, scrollHeight, clientHeight } = this.messagesContainerEl;
+    return scrollHeight - (scrollTop + clientHeight) <= threshold;
   }
 }

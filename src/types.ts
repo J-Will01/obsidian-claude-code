@@ -9,23 +9,31 @@ export interface ClaudeCodeSettings {
   apiKey: string;
   baseUrl: string;
   model: string;
+  storeApiKeyInKeychain: boolean;
 
   // Permissions.
   autoApproveVaultReads: boolean;
   autoApproveVaultWrites: boolean;
   requireBashApproval: boolean;
+  reviewEditsWithDiff: boolean;
 
   // Persistent permission approvals (tools that are always allowed).
   alwaysAllowedTools: string[];
 
   // UI Preferences.
   sidebarWidth: number;
+  showProjectControlsPanel: boolean;
 
   // Limits.
   maxBudgetPerSession: number;
+  maxPinnedContextChars: number;
 
   // Agent SDK settings.
   maxTurns: number;
+
+  // MCP servers.
+  additionalMcpServers: McpServerSetting[];
+  approvedMcpServers: string[];
 }
 
 // Default settings values.
@@ -33,13 +41,19 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   apiKey: "",
   baseUrl: "",
   model: "sonnet",
+  storeApiKeyInKeychain: false,
   autoApproveVaultReads: true,
   autoApproveVaultWrites: true,  // Default to auto-approve for better UX.
   requireBashApproval: true,
+  reviewEditsWithDiff: false,
   alwaysAllowedTools: [],
   sidebarWidth: 400,
+  showProjectControlsPanel: true,
   maxBudgetPerSession: 10.0,
+  maxPinnedContextChars: 8000,
   maxTurns: 50,
+  additionalMcpServers: [],
+  approvedMcpServers: [],
 };
 
 // Error classification for retry and display logic.
@@ -79,10 +93,18 @@ export interface ToolCall {
   name: string;
   input: Record<string, unknown>;
   output?: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  durationMs?: number;
+  raw?: unknown;
   status: "pending" | "running" | "success" | "error";
   error?: string;
   startTime: number;
   endTime?: number;
+  filePath?: string;
+  backupPath?: string;
+  diff?: string;
 
   // Subagent-specific fields for Task tool calls.
   isSubagent?: boolean;
@@ -104,6 +126,7 @@ export interface Conversation {
     totalTokens: number;
     totalCostUsd: number;
   };
+  pinnedContext?: MessageContext[];
 }
 
 // Context that can be attached to a message.
@@ -112,6 +135,14 @@ export interface MessageContext {
   path?: string;
   content: string;
   label: string;
+}
+
+export interface McpServerSetting {
+  name: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  enabled: boolean;
 }
 
 // Events emitted by the agent controller.
