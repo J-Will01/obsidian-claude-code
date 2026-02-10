@@ -79,6 +79,13 @@ export const SLASH_COMMANDS: Suggestion[] = [
     description: "Show MCP server status",
     icon: "plug",
   },
+  {
+    type: "command",
+    value: "/rewind",
+    label: "/rewind",
+    description: "Restore most recent backup",
+    icon: "rotate-ccw",
+  },
 ];
 
 /**

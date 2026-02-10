@@ -9,6 +9,7 @@ import { ConversationHistoryModal } from "./ConversationHistoryModal";
 import { logger } from "../utils/Logger";
 import { ProjectControls } from "./components/ProjectControls";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
+import { revertFromBackup } from "../utils/DiffEngine";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -429,6 +430,9 @@ export class ChatView extends ItemView {
       case "mcp":
         await this.showMcpMessage();
         break;
+      case "rewind":
+        await this.handleRewindCommand();
+        break;
       default:
         break;
     }
@@ -527,6 +531,47 @@ export class ChatView extends ItemView {
       this.refreshProjectControls();
     } catch (error) {
       logger.warn("ChatView", "Failed to persist local assistant message", { error: String(error) });
+    }
+  }
+
+  private findLatestRevertibleToolCall(): { filePath: string; backupPath: string } | null {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const message = this.messages[i];
+      const toolCalls = message.toolCalls ?? [];
+      for (let j = toolCalls.length - 1; j >= 0; j--) {
+        const toolCall = toolCalls[j];
+        if (toolCall.filePath && toolCall.backupPath) {
+          return {
+            filePath: toolCall.filePath,
+            backupPath: toolCall.backupPath,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  private async handleRewindCommand() {
+    const target = this.findLatestRevertibleToolCall();
+    if (!target) {
+      await this.appendLocalAssistantMessage(
+        "Rewind",
+        "No revertible edit was found in this conversation."
+      );
+      return;
+    }
+
+    try {
+      await revertFromBackup(this.plugin.app.vault, target.filePath, target.backupPath);
+      await this.appendLocalAssistantMessage(
+        "Rewind",
+        `Restored \`${target.filePath}\` from backup \`${target.backupPath}\`.`
+      );
+    } catch (error) {
+      await this.appendLocalAssistantMessage(
+        "Rewind",
+        `Failed to restore backup for \`${target.filePath}\`: ${String(error)}`
+      );
     }
   }
 

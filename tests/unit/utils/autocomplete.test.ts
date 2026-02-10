@@ -26,6 +26,7 @@ describe("autocomplete utilities", () => {
       expect(commandValues).toContain("/status");
       expect(commandValues).toContain("/permissions");
       expect(commandValues).toContain("/mcp");
+      expect(commandValues).toContain("/rewind");
     });
 
     it("should have type 'command' for all items", () => {

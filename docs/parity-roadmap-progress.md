@@ -16,7 +16,7 @@ Branch: `codex/parity-roadmap-phase1`
 - [x] Wire local slash command callbacks from chat input into `ChatView`.
 - [x] Make `/new` and `/clear` execute real local actions.
 - [x] Add parity-oriented command scaffolds: `/status`, `/permissions`, `/mcp`.
-- [ ] Add `/rewind` UX flow backed by checkpoint restore.
+- [x] Add `/rewind` UX flow backed by checkpoint restore.
 
 ### Permission / Safety Parity
 

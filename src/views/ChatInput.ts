@@ -189,6 +189,10 @@ export class ChatInput {
         this.options.onCommand?.("mcp");
         this.textareaEl.value = "";
         break;
+      case "/rewind":
+        this.options.onCommand?.("rewind");
+        this.textareaEl.value = "";
+        break;
       default:
         this.textareaEl.value = command + " ";
     }
