@@ -54,11 +54,11 @@ The settings page shows which authentication method is active.
 
 Toggle the sidebar with the ribbon icon or `Cmd+Shift+C`. Type your message and press Enter.
 
-Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context, `/status` `/permissions` `/mcp` show local session diagnostics, and `/rewind` restores the latest backup from this conversation.
+Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context, `/status` `/permissions` `/mcp` show local session diagnostics, `/rewind` restores the latest backup from this conversation, and `/checkpoint` lists available rewind checkpoints.
 
 When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
 
-The Project Controls panel (toggleable in settings) exposes model/budget/turn limits, auth status, active skills, MCP servers, and quick actions for pinning context like the active file or a text selection.
+The Project Controls panel (toggleable in settings) exposes model/budget/turn limits, auth status, active skills, MCP servers, and quick actions for pinning context like the active file or a text selection. Chat header controls also include a checkpoint/rewind menu for restoring recent edit backups.
 
 ## Tools and Skills
 
@@ -119,7 +119,7 @@ Debug logs are written to `~/.obsidian-claude-code/debug.log`.
 
 - **Streaming updates:** real-time partial response rendering.
 - **Review edits with diff:** show unified diffs and allow revert from backup.
-- **Project Controls panel:** model/budget/turns/auth/skills + context pinning actions.
+- **Project Controls panel:** model/budget/turns/auth/skills + context pinning and rewind actions.
 - **Permission mode:** choose `default`, `acceptEdits`, `plan`, or `bypassPermissions`.
 - **Keychain storage:** store API keys in the OS keychain when supported.
 - **Additional MCP servers:** add/approve extra MCP server configs via JSON.

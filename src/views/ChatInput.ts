@@ -11,6 +11,16 @@ interface ChatInputOptions {
   plugin: ClaudeCodePlugin;
 }
 
+const LOCAL_COMMANDS = new Set([
+  "new",
+  "clear",
+  "status",
+  "permissions",
+  "mcp",
+  "rewind",
+  "checkpoint",
+]);
+
 export class ChatInput {
   private containerEl: HTMLElement;
   private textareaEl!: HTMLTextAreaElement;
@@ -193,10 +203,27 @@ export class ChatInput {
         this.options.onCommand?.("rewind");
         this.textareaEl.value = "";
         break;
+      case "/checkpoint":
+        this.options.onCommand?.("checkpoint");
+        this.textareaEl.value = "";
+        break;
       default:
         this.textareaEl.value = command + " ";
     }
     this.textareaEl.focus();
+  }
+
+  private parseLocalCommand(message: string): string | null {
+    if (!message.startsWith("/")) {
+      return null;
+    }
+
+    const command = message.slice(1).trim().split(/\s+/)[0]?.toLowerCase();
+    if (!command) {
+      return null;
+    }
+
+    return LOCAL_COMMANDS.has(command) ? command : null;
   }
 
   private insertFileMention(path: string) {
@@ -227,6 +254,16 @@ export class ChatInput {
 
     if (!message) {
       logger.warn("ChatInput", "Empty message, not sending");
+      return;
+    }
+
+    const localCommand = this.parseLocalCommand(message);
+    if (localCommand) {
+      this.options.onCommand?.(localCommand);
+      this.textareaEl.value = "";
+      this.autoResize();
+      this.autocomplete.hide();
+      logger.info("ChatInput", "Executed local slash command", { command: localCommand });
       return;
     }
 

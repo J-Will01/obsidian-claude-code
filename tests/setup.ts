@@ -1,4 +1,5 @@
 import { beforeAll, afterEach, vi } from "vitest";
+import { installObsidianDomShim } from "./helpers/obsidianDom";
 
 // Mock Obsidian globally before any imports.
 vi.mock("obsidian", async () => {
@@ -19,6 +20,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
 beforeAll(() => {
   // Setup global DOM environment if needed.
   // happy-dom provides document, window, etc.
+  installObsidianDomShim();
 });
 
 afterEach(() => {

@@ -86,6 +86,13 @@ export const SLASH_COMMANDS: Suggestion[] = [
     description: "Restore most recent backup",
     icon: "rotate-ccw",
   },
+  {
+    type: "command",
+    value: "/checkpoint",
+    label: "/checkpoint",
+    description: "List rewind checkpoints",
+    icon: "history",
+  },
 ];
 
 /**

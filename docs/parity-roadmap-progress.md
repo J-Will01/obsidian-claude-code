@@ -28,12 +28,12 @@ Branch: `codex/parity-roadmap-phase1`
 ## Phase 2 - Runtime Controls
 
 - [x] Expose richer session status details in UI (`model`, turns, auth source, MCP status).
-- [ ] Add checkpoint/rewind controls that map to Claude Code-native workflow.
+- [x] Add checkpoint/rewind controls that map to Claude Code-native workflow.
 - [x] Add richer MCP management UI beyond raw JSON editing.
 
 ## Phase 3 - Hardening and Test Depth
 
 - [x] Update permission utility and property tests for the read-approval policy.
 - [x] Re-run full test suite after phase 1 changes.
-- [ ] Add component-level tests for real slash command execution flow.
-- [ ] Expand end-to-end style tests for permission modal behavior.
+- [x] Add component-level tests for real slash command execution flow.
+- [x] Expand end-to-end style tests for permission modal behavior.

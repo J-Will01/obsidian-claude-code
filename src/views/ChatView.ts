@@ -196,6 +196,13 @@ export class ChatView extends ItemView {
     setIcon(historyButton, "history");
     historyButton.addEventListener("click", () => this.showHistory());
 
+    // Checkpoint/rewind button.
+    const checkpointButton = actionsEl.createEl("button", {
+      attr: { "aria-label": "Checkpoints and Rewind" },
+    });
+    setIcon(checkpointButton, "rotate-ccw");
+    checkpointButton.addEventListener("click", (e) => this.showCheckpointMenu(e as MouseEvent));
+
     // Settings button.
     const settingsButton = actionsEl.createEl("button", { attr: { "aria-label": "Settings" } });
     setIcon(settingsButton, "settings");
@@ -373,6 +380,9 @@ export class ChatView extends ItemView {
         conversationManager: this.conversationManager,
         onResetSession: () => this.resetSession(),
         onOpenLogs: () => this.openLogs(),
+        onRewindLatest: () => {
+          void this.handleRewindCommand();
+        },
       });
       this.projectControls.render();
     }
@@ -432,6 +442,9 @@ export class ChatView extends ItemView {
         break;
       case "rewind":
         await this.handleRewindCommand();
+        break;
+      case "checkpoint":
+        await this.handleCheckpointCommand();
         break;
       default:
         break;
@@ -534,26 +547,107 @@ export class ChatView extends ItemView {
     }
   }
 
-  private findLatestRevertibleToolCall(): { filePath: string; backupPath: string } | null {
+  private getRewindCheckpoints(limit?: number): Array<{ filePath: string; backupPath: string; timestamp: number }> {
+    const checkpoints: Array<{ filePath: string; backupPath: string; timestamp: number }> = [];
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const message = this.messages[i];
       const toolCalls = message.toolCalls ?? [];
       for (let j = toolCalls.length - 1; j >= 0; j--) {
         const toolCall = toolCalls[j];
         if (toolCall.filePath && toolCall.backupPath) {
-          return {
+          checkpoints.push({
             filePath: toolCall.filePath,
             backupPath: toolCall.backupPath,
-          };
+            timestamp: toolCall.startTime || message.timestamp,
+          });
+          if (limit && checkpoints.length >= limit) {
+            return checkpoints;
+          }
         }
       }
     }
-    return null;
+    return checkpoints;
+  }
+
+  private async restoreCheckpoint(
+    checkpoint: { filePath: string; backupPath: string },
+    title = "Rewind"
+  ): Promise<boolean> {
+    try {
+      await revertFromBackup(this.plugin.app.vault, checkpoint.filePath, checkpoint.backupPath);
+      await this.appendLocalAssistantMessage(
+        title,
+        `Restored \`${checkpoint.filePath}\` from backup \`${checkpoint.backupPath}\`.`
+      );
+      return true;
+    } catch (error) {
+      await this.appendLocalAssistantMessage(
+        title,
+        `Failed to restore backup for \`${checkpoint.filePath}\`: ${String(error)}`
+      );
+      return false;
+    }
+  }
+
+  private formatCheckpointTime(timestamp: number): string {
+    const dt = new Date(timestamp);
+    if (Number.isNaN(dt.getTime())) {
+      return "unknown time";
+    }
+    return dt.toLocaleString();
+  }
+
+  private showCheckpointMenu(e: MouseEvent) {
+    const checkpoints = this.getRewindCheckpoints(10);
+    const menu = new Menu();
+
+    menu.addItem((item) => {
+      item.setTitle("Rewind latest edit")
+        .setIcon("rotate-ccw")
+        .setDisabled(checkpoints.length === 0)
+        .onClick(() => {
+          void this.handleRewindCommand();
+        });
+    });
+
+    if (checkpoints.length > 0) {
+      menu.addSeparator();
+      checkpoints.forEach((checkpoint) => {
+        const shortPath = checkpoint.filePath.split("/").pop() || checkpoint.filePath;
+        menu.addItem((item) => {
+          item.setTitle(`${shortPath} (${this.formatCheckpointTime(checkpoint.timestamp)})`)
+            .setIcon("file-text")
+            .onClick(() => {
+              void this.restoreCheckpoint(checkpoint, "Checkpoint Restore");
+            });
+        });
+      });
+    }
+
+    menu.showAtMouseEvent(e);
+  }
+
+  private async handleCheckpointCommand() {
+    const checkpoints = this.getRewindCheckpoints(10);
+    if (checkpoints.length === 0) {
+      await this.appendLocalAssistantMessage(
+        "Checkpoints",
+        "No checkpoints are available yet. Checkpoints appear after Claude makes a file edit."
+      );
+      return;
+    }
+
+    const lines = checkpoints.map((checkpoint, index) =>
+      `${index + 1}. \`${checkpoint.filePath}\` - ${this.formatCheckpointTime(checkpoint.timestamp)}`
+    );
+    lines.push("");
+    lines.push("Use the rewind button in the chat header to restore a specific checkpoint.");
+    await this.appendLocalAssistantMessage("Checkpoints", lines.join("\n"));
   }
 
   private async handleRewindCommand() {
-    const target = this.findLatestRevertibleToolCall();
-    if (!target) {
+    const latest = this.getRewindCheckpoints(1)[0];
+    if (!latest) {
       await this.appendLocalAssistantMessage(
         "Rewind",
         "No revertible edit was found in this conversation."
@@ -561,18 +655,7 @@ export class ChatView extends ItemView {
       return;
     }
 
-    try {
-      await revertFromBackup(this.plugin.app.vault, target.filePath, target.backupPath);
-      await this.appendLocalAssistantMessage(
-        "Rewind",
-        `Restored \`${target.filePath}\` from backup \`${target.backupPath}\`.`
-      );
-    } catch (error) {
-      await this.appendLocalAssistantMessage(
-        "Rewind",
-        `Failed to restore backup for \`${target.filePath}\`: ${String(error)}`
-      );
-    }
+    await this.restoreCheckpoint(latest);
   }
 
   private async handleSendMessage(content: string) {
