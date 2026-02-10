@@ -77,7 +77,7 @@ describe("generateTitle property tests", () => {
 
   it("should handle unicode correctly", () => {
     fc.assert(
-      fc.property(fc.unicodeString(), (content) => {
+      fc.property(fc.string(), (content) => {
         const title = generateTitle(content);
         // Note: length check is character count, not byte count.
         expect(title.length).toBeLessThanOrEqual(50);

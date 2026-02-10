@@ -48,12 +48,6 @@ export default defineConfig({
 
     // Parallelization.
     pool: "threads",
-    poolOptions: {
-      threads: {
-        singleThread: false,
-        isolate: true,
-      },
-    },
 
     // Timeouts.
     testTimeout: 10000,

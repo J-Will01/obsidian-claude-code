@@ -154,9 +154,14 @@ export class AgentController {
       // Build environment with API key and base URL if set in settings.
       const env: Record<string, string | undefined> = { ...process.env };
       const apiKey = this.plugin.getApiKey();
+      const oauthToken = this.plugin.getOAuthToken?.();
       if (apiKey) {
         env.ANTHROPIC_API_KEY = apiKey;
         logger.debug("AgentController", "Using API key from settings");
+      }
+      if (oauthToken) {
+        env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+        logger.debug("AgentController", "Using OAuth token from settings");
       }
       if (this.plugin.settings.baseUrl) {
         env.ANTHROPIC_BASE_URL = this.plugin.settings.baseUrl;
@@ -892,6 +897,7 @@ export class AgentController {
   isReady(): boolean {
     return !!(
       this.plugin.getApiKey() ||
+      this.plugin.getOAuthToken?.() ||
       process.env.ANTHROPIC_API_KEY ||
       process.env.CLAUDE_CODE_OAUTH_TOKEN
     );

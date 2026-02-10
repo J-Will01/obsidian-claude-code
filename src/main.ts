@@ -3,12 +3,21 @@ import { ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE } from "./types";
 import { ChatView } from "./views/ChatView";
 import { ClaudeCodeSettingTab } from "./settings/SettingsTab";
 import { logger } from "./utils/Logger";
-import { deleteKeychainApiKey, getKeychainApiKey, isKeytarAvailable, setKeychainApiKey } from "./utils/Keychain";
+import {
+  deleteKeychainApiKey,
+  deleteKeychainOAuthToken,
+  getKeychainApiKey,
+  getKeychainOAuthToken,
+  isKeytarAvailable,
+  setKeychainApiKey,
+  setKeychainOAuthToken,
+} from "./utils/Keychain";
 
 export default class ClaudeCodePlugin extends Plugin {
   settings: ClaudeCodeSettings = DEFAULT_SETTINGS;
   private readonly MAX_CHAT_WINDOWS = 5;
   private runtimeApiKey = "";
+  private runtimeOAuthToken = "";
 
   async onload() {
     await this.loadSettings();
@@ -89,12 +98,19 @@ export default class ClaudeCodePlugin extends Plugin {
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     if (this.settings.storeApiKeyInKeychain) {
-      const key = await getKeychainApiKey();
-      if (key) {
-        this.runtimeApiKey = key;
+      const [apiKey, oauthToken] = await Promise.all([
+        getKeychainApiKey(),
+        getKeychainOAuthToken(),
+      ]);
+      if (apiKey) {
+        this.runtimeApiKey = apiKey;
+      }
+      if (oauthToken) {
+        this.runtimeOAuthToken = oauthToken;
       }
     } else {
       this.runtimeApiKey = this.settings.apiKey;
+      this.runtimeOAuthToken = this.settings.oauthToken;
     }
   }
 
@@ -102,6 +118,7 @@ export default class ClaudeCodePlugin extends Plugin {
     const data = { ...this.settings };
     if (this.settings.storeApiKeyInKeychain) {
       data.apiKey = "";
+      data.oauthToken = "";
     }
     await this.saveData(data);
   }
@@ -212,6 +229,7 @@ export default class ClaudeCodePlugin extends Plugin {
   isApiKeyConfigured(): boolean {
     return !!(
       this.getApiKey() ||
+      this.getOAuthToken() ||
       process.env.ANTHROPIC_API_KEY ||
       process.env.CLAUDE_CODE_OAUTH_TOKEN
     );
@@ -219,6 +237,10 @@ export default class ClaudeCodePlugin extends Plugin {
 
   getApiKey(): string {
     return this.settings.storeApiKeyInKeychain ? this.runtimeApiKey : this.settings.apiKey;
+  }
+
+  getOAuthToken(): string {
+    return this.settings.storeApiKeyInKeychain ? this.runtimeOAuthToken : this.settings.oauthToken;
   }
 
   async setApiKey(value: string) {
@@ -239,6 +261,24 @@ export default class ClaudeCodePlugin extends Plugin {
     await this.saveSettings();
   }
 
+  async setOAuthToken(value: string) {
+    this.runtimeOAuthToken = value;
+    if (this.settings.storeApiKeyInKeychain) {
+      if (!isKeytarAvailable()) {
+        new Notice("Keytar not available. Falling back to settings storage.");
+        this.settings.storeApiKeyInKeychain = false;
+        this.settings.oauthToken = value;
+        await this.saveSettings();
+        return;
+      }
+      await setKeychainOAuthToken(value);
+      await this.saveSettings();
+      return;
+    }
+    this.settings.oauthToken = value;
+    await this.saveSettings();
+  }
+
   async toggleKeychainStorage(enabled: boolean) {
     if (enabled) {
       if (!isKeytarAvailable()) {
@@ -246,44 +286,58 @@ export default class ClaudeCodePlugin extends Plugin {
         return;
       }
       this.settings.storeApiKeyInKeychain = true;
-      if (this.runtimeApiKey) {
-        await setKeychainApiKey(this.runtimeApiKey);
-      }
+      await Promise.all([
+        this.runtimeApiKey ? setKeychainApiKey(this.runtimeApiKey) : Promise.resolve(),
+        this.runtimeOAuthToken ? setKeychainOAuthToken(this.runtimeOAuthToken) : Promise.resolve(),
+      ]);
       await this.saveSettings();
     } else {
       this.settings.storeApiKeyInKeychain = false;
       if (this.runtimeApiKey) {
         this.settings.apiKey = this.runtimeApiKey;
       }
-      await deleteKeychainApiKey();
+      if (this.runtimeOAuthToken) {
+        this.settings.oauthToken = this.runtimeOAuthToken;
+      }
+      await Promise.all([deleteKeychainApiKey(), deleteKeychainOAuthToken()]);
       await this.saveSettings();
     }
   }
 
   getAuthStatus() {
-    const hasOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const hasEnvOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
     const hasEnvApiKey = !!process.env.ANTHROPIC_API_KEY;
     const hasStoredApiKey = !!this.getApiKey();
-    const source = hasOAuthToken
-      ? "oauth"
-      : hasEnvApiKey
-        ? "env"
-        : hasStoredApiKey
-          ? this.settings.storeApiKeyInKeychain
-            ? "keychain"
-            : "settings"
-          : "none";
+    const hasStoredOAuthToken = !!this.getOAuthToken();
+    const hasOAuthToken = hasEnvOAuthToken || hasStoredOAuthToken;
+    const source = hasEnvApiKey
+      ? "envApiKey"
+      : hasStoredApiKey
+        ? this.settings.storeApiKeyInKeychain
+          ? "keychainApiKey"
+          : "settingsApiKey"
+        : hasEnvOAuthToken
+          ? "envOAuth"
+          : hasStoredOAuthToken
+            ? this.settings.storeApiKeyInKeychain
+              ? "keychainOAuth"
+              : "settingsOAuth"
+            : "none";
     const labelMap: Record<string, string> = {
-      oauth: "OAuth",
-      env: "Env",
-      keychain: "Keychain",
-      settings: "Settings",
+      envApiKey: "Env API Key",
+      keychainApiKey: "Keychain API Key",
+      settingsApiKey: "Settings API Key",
+      envOAuth: "Env OAuth",
+      keychainOAuth: "Keychain OAuth",
+      settingsOAuth: "Settings OAuth",
       none: "Missing",
     };
     return {
       hasOAuthToken,
+      hasEnvOAuthToken,
       hasEnvApiKey,
       hasStoredApiKey,
+      hasStoredOAuthToken,
       source,
       label: labelMap[source] || "Unknown",
     };

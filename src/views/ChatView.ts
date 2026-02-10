@@ -146,10 +146,10 @@ export class ChatView extends ItemView {
     const noticeEl = this.contentEl.createDiv({ cls: "claude-code-setup-notice" });
 
     const titleEl = noticeEl.createDiv({ cls: "claude-code-setup-notice-title" });
-    titleEl.setText("API Key Required");
+    titleEl.setText("Authentication Required");
 
     const descEl = noticeEl.createDiv();
-    descEl.setText("Please configure your Anthropic API key in settings to start chatting with Claude.");
+    descEl.setText("Please configure an API key or Claude OAuth token in settings to start chatting with Claude.");
 
     const buttonEl = noticeEl.createEl("button", { cls: "mod-cta" });
     buttonEl.setText("Open Settings");
@@ -740,7 +740,6 @@ export class ChatView extends ItemView {
 
   private openLogs() {
     const logPath = logger.getLogPath();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this.app as any).openWithDefaultApp?.(logPath);
   }
 

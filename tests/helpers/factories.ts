@@ -9,6 +9,7 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
 
   const defaultSettings: MockPluginSettings = {
     apiKey: "test-api-key",
+    oauthToken: "",
     baseUrl: "",
     model: "sonnet",
     maxTokens: 4096,
@@ -51,12 +52,14 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     saveData: vi.fn().mockResolvedValue(undefined),
     saveSettings: vi.fn().mockResolvedValue(undefined),
     getApiKey: vi.fn().mockReturnValue((settingsOverrides?.apiKey ?? defaultSettings.apiKey)),
+    getOAuthToken: vi.fn().mockReturnValue((settingsOverrides?.oauthToken ?? defaultSettings.oauthToken)),
     ...otherOverrides,
   };
 }
 
 export interface MockPluginSettings {
   apiKey: string;
+  oauthToken: string;
   baseUrl: string;
   model: string;
   maxTokens: number;
@@ -96,6 +99,7 @@ export interface MockPlugin {
   saveData: ReturnType<typeof vi.fn>;
   saveSettings: ReturnType<typeof vi.fn>;
   getApiKey: ReturnType<typeof vi.fn>;
+  getOAuthToken: ReturnType<typeof vi.fn>;
 }
 
 // Create a mock conversation.

@@ -23,14 +23,14 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
 
     // Check for environment variables.
     const hasEnvApiKey = !!process.env.ANTHROPIC_API_KEY;
-    const hasOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const hasEnvOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
-    if (hasEnvApiKey || hasOAuthToken) {
+    if (hasEnvApiKey || hasEnvOAuthToken) {
       const envNotice = containerEl.createDiv({ cls: "claude-code-env-notice" });
       envNotice.createEl("p", {
-        text: hasOAuthToken
-          ? "Using Claude Max subscription via CLAUDE_CODE_OAUTH_TOKEN environment variable."
-          : "Using API key from ANTHROPIC_API_KEY environment variable.",
+        text: hasEnvApiKey
+          ? "Using API key from ANTHROPIC_API_KEY environment variable."
+          : "Using Claude Max subscription via CLAUDE_CODE_OAUTH_TOKEN environment variable.",
         cls: "mod-success",
       });
     }
@@ -42,7 +42,7 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("API Key")
       .setDesc(
-        hasEnvApiKey || hasOAuthToken
+        hasEnvApiKey || hasEnvOAuthToken
           ? "Optional: Override the environment variable with a specific key"
           : "Your Anthropic API key. Get one at console.anthropic.com"
       )
@@ -52,6 +52,29 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
           .setValue(this.plugin.getApiKey())
           .onChange(async (value) => {
             await this.plugin.setApiKey(value);
+          })
+      )
+      .then((setting) => {
+        // Make the input a password field.
+        const inputEl = setting.controlEl.querySelector("input");
+        if (inputEl) {
+          inputEl.type = "password";
+        }
+      });
+
+    new Setting(containerEl)
+      .setName("Claude OAuth Token")
+      .setDesc(
+        hasEnvOAuthToken || hasEnvApiKey
+          ? "Optional: Override environment authentication with a specific OAuth token"
+          : "Optional: Paste CLAUDE_CODE_OAUTH_TOKEN here (from 'claude setup-token')"
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(hasEnvOAuthToken ? "(using env var)" : "oauth-token")
+          .setValue(this.plugin.getOAuthToken())
+          .onChange(async (value) => {
+            await this.plugin.setOAuthToken(value);
           })
       )
       .then((setting) => {
@@ -83,8 +106,8 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Store API key in OS keychain")
-      .setDesc(isKeytarAvailable() ? "Use the system keychain when available" : "Keytar not available")
+      .setName("Store secrets in OS keychain")
+      .setDesc(isKeytarAvailable() ? "Use the system keychain for API and OAuth tokens" : "Keytar not available")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.storeApiKeyInKeychain).onChange(async (value) => {
           await this.plugin.toggleKeychainStorage(value);
@@ -101,8 +124,12 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
           try {
             const env: Record<string, string | undefined> = { ...process.env };
             const apiKey = this.plugin.getApiKey();
+            const oauthToken = this.plugin.getOAuthToken();
             if (apiKey) {
               env.ANTHROPIC_API_KEY = apiKey;
+            }
+            if (oauthToken) {
+              env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
             }
             const claudeExecutable = requireClaudeExecutable();
             const vaultPath = this.plugin.getVaultPath();
@@ -143,9 +170,9 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
         text: "Run 'claude setup-token' in your terminal to authenticate with your subscription",
       });
       steps.createEl("li", {
-        text: "This creates a CLAUDE_CODE_OAUTH_TOKEN environment variable",
+        text: "Paste the generated token into 'Claude OAuth Token' above OR export CLAUDE_CODE_OAUTH_TOKEN",
       });
-      steps.createEl("li", { text: "Restart Obsidian to pick up the token" });
+      steps.createEl("li", { text: "If using environment variables, restart Obsidian to pick up the token" });
       details.createEl("p", {
         text: "Note: If ANTHROPIC_API_KEY is also set, the API key takes precedence.",
         cls: "mod-warning",

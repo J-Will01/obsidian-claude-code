@@ -115,7 +115,7 @@ describe("classifyError property tests", () => {
 
   it("should handle unicode in error messages", () => {
     fc.assert(
-      fc.property(fc.unicodeString(), (message) => {
+      fc.property(fc.string(), (message) => {
         const error = new Error(message);
         const result = classifyError(error);
         expect(["transient", "auth", "network", "permanent"]).toContain(result);

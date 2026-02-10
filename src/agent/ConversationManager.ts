@@ -1,6 +1,5 @@
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type ClaudeCodePlugin from "../main";
-import { Conversation, ChatMessage, MessageContext } from "../types";
+import { Conversation, ChatMessage, MessageContext, ConversationHistoryEntry } from "../types";
 import { logger } from "../utils/Logger";
 import { generateTitleWithHaiku } from "../utils/formatting";
 import { findClaudeExecutable } from "../utils/claudeExecutable";
@@ -12,7 +11,7 @@ const HISTORY_DIR = "history";
 
 // Stored conversation data.
 interface StoredConversation extends Conversation {
-  history: MessageParam[];
+  history: ConversationHistoryEntry[];
   displayMessages: ChatMessage[];
   pinnedContext?: MessageContext[];
 }
@@ -188,7 +187,7 @@ export class ConversationManager {
   }
 
   // Add a message to the current conversation.
-  async addMessage(displayMessage: ChatMessage, historyEntry?: MessageParam) {
+  async addMessage(displayMessage: ChatMessage, historyEntry?: ConversationHistoryEntry) {
     logger.debug("ConversationManager", "addMessage called", { role: displayMessage.role, hasHistory: !!historyEntry });
 
     if (!this.currentConversation) {
@@ -302,7 +301,7 @@ export class ConversationManager {
   }
 
   // Get the message history for the API.
-  getHistory(): MessageParam[] {
+  getHistory(): ConversationHistoryEntry[] {
     return this.currentConversation?.history || [];
   }
 
@@ -312,7 +311,7 @@ export class ConversationManager {
   }
 
   // Set the history (from AgentController).
-  async setHistory(history: MessageParam[]) {
+  async setHistory(history: ConversationHistoryEntry[]) {
     if (this.currentConversation) {
       this.currentConversation.history = history;
       await this.saveConversation(this.currentConversation);
@@ -332,7 +331,7 @@ export class ConversationManager {
   async addMessageToConversation(
     conversationId: string,
     displayMessage: ChatMessage,
-    historyEntry?: MessageParam
+    historyEntry?: ConversationHistoryEntry
   ) {
     logger.debug("ConversationManager", "addMessageToConversation called", {
       conversationId,
@@ -454,8 +453,9 @@ export class ConversationManager {
     logger.debug("ConversationManager", "Generating title with Haiku", { conversationId: conversation.id });
 
     try {
-      // Get API key, Claude executable path, and vault path from plugin.
+      // Get auth credentials, Claude executable path, and vault path from plugin.
       const apiKey = this.plugin.getApiKey() || process.env.ANTHROPIC_API_KEY;
+      const oauthToken = this.plugin.getOAuthToken?.() || process.env.CLAUDE_CODE_OAUTH_TOKEN;
       const claudeExecutable = findClaudeExecutable();
       const vaultPath = (this.plugin.app.vault.adapter as any).basePath || process.cwd();
 
@@ -464,6 +464,7 @@ export class ConversationManager {
         firstUser.content,
         firstAssistant.content,
         apiKey,
+        oauthToken,
         claudeExecutable,
         vaultPath
       );

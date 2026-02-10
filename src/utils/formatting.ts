@@ -46,6 +46,7 @@ export function generateTitle(content: string): string {
  * @param userMessage The first user message content
  * @param assistantMessage The first assistant response content
  * @param apiKey The Anthropic API key (from settings or env)
+ * @param oauthToken The Claude OAuth token (from settings or env)
  * @param claudeExecutable Path to the Claude CLI executable
  * @param cwd Working directory for the SDK (vault path)
  * @returns A promise that resolves to a concise title, or null if generation fails
@@ -54,13 +55,14 @@ export async function generateTitleWithHaiku(
   userMessage: string,
   assistantMessage: string,
   apiKey?: string,
+  oauthToken?: string,
   claudeExecutable?: string,
   cwd?: string
 ): Promise<string | null> {
   try {
     // Check for any form of authentication (API key or OAuth token).
     const hasApiKey = !!(apiKey || process.env.ANTHROPIC_API_KEY);
-    const hasOAuthToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const hasOAuthToken = !!(oauthToken || process.env.CLAUDE_CODE_OAUTH_TOKEN);
 
     if (!hasApiKey && !hasOAuthToken) {
       logger.debug("TitleGeneration", "No authentication available for Haiku title generation");
@@ -72,6 +74,9 @@ export async function generateTitleWithHaiku(
     // Override API key if explicitly provided in settings.
     if (apiKey) {
       env.ANTHROPIC_API_KEY = apiKey;
+    }
+    if (oauthToken) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
     }
 
     // Add claude executable path to PATH if provided.

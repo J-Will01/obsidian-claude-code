@@ -1,11 +1,10 @@
-import type { Conversation, ChatMessage } from "../types";
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { Conversation, ChatMessage, ConversationHistoryEntry } from "../types";
 
 /**
  * Stored conversation data with full history.
  */
 export interface StoredConversation extends Conversation {
-  history: MessageParam[];
+  history: ConversationHistoryEntry[];
   displayMessages: ChatMessage[];
 }
 

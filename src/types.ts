@@ -7,6 +7,7 @@ export const CHAT_VIEW_TYPE = "claude-code-chat-view";
 export interface ClaudeCodeSettings {
   // API Configuration.
   apiKey: string;
+  oauthToken: string;
   baseUrl: string;
   model: string;
   storeApiKeyInKeychain: boolean;
@@ -39,6 +40,7 @@ export interface ClaudeCodeSettings {
 // Default settings values.
 export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   apiKey: "",
+  oauthToken: "",
   baseUrl: "",
   model: "sonnet",
   storeApiKeyInKeychain: false,
@@ -66,6 +68,13 @@ export interface ClassifiedError extends Error {
 
 // Message roles for conversation.
 export type MessageRole = "user" | "assistant";
+
+// Stored history entry for persisted conversation context.
+export interface ConversationHistoryEntry {
+  role: string;
+  content: unknown;
+  [key: string]: unknown;
+}
 
 // Chat message structure.
 export interface ChatMessage {
