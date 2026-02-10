@@ -73,6 +73,23 @@ export class ProjectControls {
       }
     });
 
+    const permissionRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    permissionRow.createSpan({ text: "Permissions" });
+    const permissionSelect = permissionRow.createEl("select");
+    permissionSelect.add(new Option("Default", "default"));
+    permissionSelect.add(new Option("Accept Edits", "acceptEdits"));
+    permissionSelect.add(new Option("Plan", "plan"));
+    permissionSelect.add(new Option("Bypass", "bypassPermissions"));
+    permissionSelect.value = this.plugin.settings.permissionMode || "default";
+    permissionSelect.addEventListener("change", async () => {
+      this.plugin.settings.permissionMode = permissionSelect.value as
+        | "default"
+        | "acceptEdits"
+        | "plan"
+        | "bypassPermissions";
+      await this.plugin.saveSettings();
+    });
+
     const authRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
     authRow.createSpan({ text: "Auth" });
     const authBadge = authRow.createSpan({ cls: "claude-code-project-controls-badge" });

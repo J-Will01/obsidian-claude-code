@@ -29,7 +29,7 @@ Branch: `codex/parity-roadmap-phase1`
 
 - [x] Expose richer session status details in UI (`model`, turns, auth source, MCP status).
 - [ ] Add checkpoint/rewind controls that map to Claude Code-native workflow.
-- [ ] Add richer MCP management UI beyond raw JSON editing.
+- [x] Add richer MCP management UI beyond raw JSON editing.
 
 ## Phase 3 - Hardening and Test Depth
 

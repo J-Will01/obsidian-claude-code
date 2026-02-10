@@ -348,14 +348,26 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
     });
 
     const mcpList = containerEl.createDiv({ cls: "claude-code-mcp-list" });
-    for (const server of this.plugin.settings.additionalMcpServers) {
+    this.plugin.settings.additionalMcpServers.forEach((server, index) => {
       const item = mcpList.createDiv({ cls: "claude-code-mcp-item" });
       item.createSpan({ text: server.name });
       const status = item.createSpan({ cls: "claude-code-mcp-status" });
       const approved = this.plugin.settings.approvedMcpServers.includes(server.name);
       status.setText(server.enabled ? (approved ? "enabled" : "needs approval") : "disabled");
-      const toggle = item.createEl("button", { text: approved ? "Revoke" : "Approve" });
-      toggle.addEventListener("click", async () => {
+
+      const actions = item.createSpan({ cls: "claude-code-mcp-actions" });
+
+      const enableToggle = actions.createEl("button", {
+        text: server.enabled ? "Disable" : "Enable",
+      });
+      enableToggle.addEventListener("click", async () => {
+        this.plugin.settings.additionalMcpServers[index].enabled = !this.plugin.settings.additionalMcpServers[index].enabled;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+
+      const approvalToggle = actions.createEl("button", { text: approved ? "Revoke" : "Approve" });
+      approvalToggle.addEventListener("click", async () => {
         if (approved) {
           this.plugin.settings.approvedMcpServers = this.plugin.settings.approvedMcpServers.filter(
             (name) => name !== server.name
@@ -366,7 +378,18 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       });
-    }
+
+      const removeBtn = actions.createEl("button", { text: "Remove" });
+      removeBtn.addEventListener("click", async () => {
+        const serverName = this.plugin.settings.additionalMcpServers[index].name;
+        this.plugin.settings.additionalMcpServers.splice(index, 1);
+        this.plugin.settings.approvedMcpServers = this.plugin.settings.approvedMcpServers.filter(
+          (name) => name !== serverName
+        );
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    });
 
     new Setting(containerEl)
       .setName("Additional MCP servers JSON")
