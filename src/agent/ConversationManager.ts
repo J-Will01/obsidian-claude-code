@@ -117,6 +117,8 @@ export class ConversationManager {
       metadata: {
         totalTokens: 0,
         totalCostUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
       },
       pinnedContext: [],
       history: [],
@@ -161,6 +163,12 @@ export class ConversationManager {
       const content = await vault.adapter.read(path);
       const conversation = JSON.parse(content) as StoredConversation;
       conversation.pinnedContext = conversation.pinnedContext ?? [];
+      conversation.metadata = {
+        totalTokens: conversation.metadata?.totalTokens ?? 0,
+        totalCostUsd: conversation.metadata?.totalCostUsd ?? 0,
+        inputTokens: conversation.metadata?.inputTokens ?? 0,
+        outputTokens: conversation.metadata?.outputTokens ?? 0,
+      };
       this.currentConversation = conversation;
       this.index.activeConversationId = id;
       await this.saveIndex();
@@ -216,14 +224,50 @@ export class ConversationManager {
   }
 
   // Update usage metadata.
-  async updateUsage(tokens: number, costUsd: number) {
+  async updateUsage(tokens: number, costUsd: number, inputTokens = 0, outputTokens = 0) {
     if (!this.currentConversation) return;
 
     this.currentConversation.metadata.totalTokens += tokens;
     this.currentConversation.metadata.totalCostUsd += costUsd;
+    this.currentConversation.metadata.inputTokens = (this.currentConversation.metadata.inputTokens ?? 0) + inputTokens;
+    this.currentConversation.metadata.outputTokens = (this.currentConversation.metadata.outputTokens ?? 0) + outputTokens;
 
     await this.saveConversation(this.currentConversation);
     await this.updateIndexEntry(this.currentConversation);
+  }
+
+  async updateUsageForConversation(
+    conversationId: string,
+    tokens: number,
+    costUsd: number,
+    inputTokens = 0,
+    outputTokens = 0
+  ) {
+    if (this.currentConversation?.id === conversationId) {
+      await this.updateUsage(tokens, costUsd, inputTokens, outputTokens);
+      return;
+    }
+
+    const path = `${STORAGE_DIR}/${HISTORY_DIR}/${conversationId}.json`;
+    const vault = this.plugin.app.vault;
+    const exists = await vault.adapter.exists(path);
+    if (!exists) {
+      return;
+    }
+    const content = await vault.adapter.read(path);
+    const conversation = JSON.parse(content) as StoredConversation;
+    conversation.metadata = {
+      totalTokens: conversation.metadata?.totalTokens ?? 0,
+      totalCostUsd: conversation.metadata?.totalCostUsd ?? 0,
+      inputTokens: conversation.metadata?.inputTokens ?? 0,
+      outputTokens: conversation.metadata?.outputTokens ?? 0,
+    };
+    conversation.metadata.totalTokens += tokens;
+    conversation.metadata.totalCostUsd += costUsd;
+    conversation.metadata.inputTokens = (conversation.metadata.inputTokens ?? 0) + inputTokens;
+    conversation.metadata.outputTokens = (conversation.metadata.outputTokens ?? 0) + outputTokens;
+    await this.saveConversation(conversation);
+    await this.updateIndexEntry(conversation);
   }
 
   // Update the index entry for a conversation.

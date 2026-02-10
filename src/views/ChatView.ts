@@ -14,6 +14,7 @@ import { revertFromBackup } from "../utils/DiffEngine";
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
   private headerEl!: HTMLElement;
+  private telemetryEl: HTMLElement | null = null;
   private messagesContainerEl!: HTMLElement;
   private inputContainerEl!: HTMLElement;
   private messageList!: MessageList;
@@ -28,6 +29,7 @@ export class ChatView extends ItemView {
   private isCancelling = false;  // Flag to suppress error display during intentional cancel.
   private activeStreamConversationId: string | null = null;  // Track which conversation owns the active stream.
   private lastUserMessage: string | null = null;  // Store last message for retry functionality.
+  private telemetryIntervalId: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -130,6 +132,10 @@ export class ChatView extends ItemView {
   async onClose() {
     // Cancel any streaming.
     this.agentController.cancelStream();
+    if (this.telemetryIntervalId !== null) {
+      window.clearInterval(this.telemetryIntervalId);
+      this.telemetryIntervalId = null;
+    }
   }
 
   private renderView() {
@@ -140,6 +146,7 @@ export class ChatView extends ItemView {
     }
 
     this.renderHeader();
+    this.renderTelemetryBars();
     this.renderMessagesArea();
     this.renderInputArea();
   }
@@ -363,10 +370,72 @@ export class ChatView extends ItemView {
       const conv = this.conversationManager.getCurrentConversation();
       titleEl.textContent = conv?.title || "New Conversation";
     }
+    this.updateTelemetryBars();
   }
 
   private refreshProjectControls() {
     this.projectControls?.render();
+    this.updateTelemetryBars();
+  }
+
+  private renderTelemetryBars() {
+    this.telemetryEl?.remove();
+    this.telemetryEl = this.contentEl.createDiv({ cls: "claude-code-telemetry-bars" });
+
+    const usageRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
+    usageRow.createDiv({ cls: "claude-code-telemetry-label", text: "5h Usage" });
+    const usageTrack = usageRow.createDiv({ cls: "claude-code-telemetry-track" });
+    usageTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-usage-fill" });
+    usageRow.createDiv({ cls: "claude-code-telemetry-value claude-code-usage-value" });
+
+    const contextRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
+    contextRow.createDiv({ cls: "claude-code-telemetry-label", text: "Context (est.)" });
+    const contextTrack = contextRow.createDiv({ cls: "claude-code-telemetry-track" });
+    contextTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-context-fill" });
+    contextRow.createDiv({ cls: "claude-code-telemetry-value claude-code-context-value" });
+
+    this.updateTelemetryBars();
+    if (this.telemetryIntervalId !== null) {
+      window.clearInterval(this.telemetryIntervalId);
+    }
+    this.telemetryIntervalId = window.setInterval(() => this.updateTelemetryBars(), 15000);
+  }
+
+  private getModelContextWindow(model: string): number {
+    switch ((model || "").toLowerCase()) {
+      case "haiku":
+      case "opus":
+      case "sonnet":
+      default:
+        return 200000;
+    }
+  }
+
+  private updateTelemetryBars() {
+    if (!this.telemetryEl) return;
+
+    const usageFill = this.telemetryEl.querySelector(".claude-code-usage-fill") as HTMLElement | null;
+    const usageValue = this.telemetryEl.querySelector(".claude-code-usage-value") as HTMLElement | null;
+    const contextFill = this.telemetryEl.querySelector(".claude-code-context-fill") as HTMLElement | null;
+    const contextValue = this.telemetryEl.querySelector(".claude-code-context-value") as HTMLElement | null;
+    if (!usageFill || !usageValue || !contextFill || !contextValue) return;
+
+    const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
+    const rolling = this.plugin.getRollingUsageSummary(5);
+    const usagePercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+    usageFill.style.width = `${usagePercent}%`;
+    usageValue.setText(
+      `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)} (${usagePercent.toFixed(0)}%)`
+    );
+
+    const conv = this.conversationManager.getCurrentConversation();
+    const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
+    const usedTokens = Math.max(0, conv?.metadata?.inputTokens ?? conv?.metadata?.totalTokens ?? 0);
+    const contextPercent = Math.min(100, (usedTokens / contextWindow) * 100);
+    contextFill.style.width = `${contextPercent}%`;
+    contextValue.setText(
+      `${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${contextPercent.toFixed(0)}%)`
+    );
   }
 
   private renderMessagesArea() {
@@ -794,6 +863,16 @@ export class ChatView extends ItemView {
       // Save to the conversation that started the stream (may be different from current if user switched).
       if (streamConvId) {
         await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const usageSample = this.agentController.getLastUsageSample();
+        if (usageSample) {
+          await this.conversationManager.updateUsageForConversation(
+            streamConvId,
+            usageSample.totalTokens,
+            usageSample.costUsd,
+            usageSample.inputTokens,
+            usageSample.outputTokens
+          );
+        }
         const sessionId = this.agentController.getSessionId();
         if (sessionId) {
           await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);
@@ -1158,6 +1237,16 @@ export class ChatView extends ItemView {
       // Save to the conversation that started the stream.
       if (streamConvId) {
         await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const usageSample = this.agentController.getLastUsageSample();
+        if (usageSample) {
+          await this.conversationManager.updateUsageForConversation(
+            streamConvId,
+            usageSample.totalTokens,
+            usageSample.costUsd,
+            usageSample.inputTokens,
+            usageSample.outputTokens
+          );
+        }
         const sessionId = this.agentController.getSessionId();
         if (sessionId) {
           await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);

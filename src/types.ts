@@ -28,6 +28,7 @@ export interface ClaudeCodeSettings {
   // Limits.
   maxBudgetPerSession: number;
   maxPinnedContextChars: number;
+  fiveHourUsageBudgetUsd: number;
 
   // Agent SDK settings.
   maxTurns: number;
@@ -36,6 +37,9 @@ export interface ClaudeCodeSettings {
   // MCP servers.
   additionalMcpServers: McpServerSetting[];
   approvedMcpServers: string[];
+
+  // Rolling usage telemetry.
+  usageEvents: UsageEvent[];
 }
 
 // Default settings values.
@@ -54,11 +58,20 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   showProjectControlsPanel: true,
   maxBudgetPerSession: 10.0,
   maxPinnedContextChars: 8000,
+  fiveHourUsageBudgetUsd: 10.0,
   maxTurns: 50,
   permissionMode: "default",
   additionalMcpServers: [],
   approvedMcpServers: [],
+  usageEvents: [],
 };
+
+export interface UsageEvent {
+  timestamp: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
 
 // Error classification for retry and display logic.
 export type ErrorType = "transient" | "auth" | "network" | "permanent";
@@ -136,6 +149,8 @@ export interface Conversation {
   metadata: {
     totalTokens: number;
     totalCostUsd: number;
+    inputTokens?: number;
+    outputTokens?: number;
   };
   pinnedContext?: MessageContext[];
 }

@@ -339,6 +339,22 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("5-hour usage budget (USD)")
+      .setDesc("Budget used for the rolling 5-hour usage bar in the chat header")
+      .addText((text) =>
+        text
+          .setPlaceholder("10.00")
+          .setValue(String(this.plugin.settings.fiveHourUsageBudgetUsd))
+          .onChange(async (value) => {
+            const parsed = parseFloat(value);
+            if (!isNaN(parsed) && parsed > 0) {
+              this.plugin.settings.fiveHourUsageBudgetUsd = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
     // MCP servers section.
     containerEl.createEl("h3", { text: "MCP Servers (Advanced)" });
 

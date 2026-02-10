@@ -33,6 +33,13 @@ interface ToolUseBlock {
 
 type ContentBlock = TextBlock | ToolUseBlock;
 
+export interface UsageSample {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 // Classify an error to determine if retry is appropriate.
 export function classifyError(error: Error): ErrorType {
   const msg = error.message.toLowerCase();
@@ -80,6 +87,7 @@ export class AgentController {
   private streamingAccumulator = new StreamingAccumulator();
   private pendingToolEdits: Map<string, { filePath: string; diff: string; backupPath?: string }> = new Map();
   private activeConversationId: string | null = null;
+  private lastUsageSample: UsageSample | null = null;
 
   constructor(plugin: ClaudeCodePlugin) {
     this.plugin = plugin;
@@ -100,6 +108,10 @@ export class AgentController {
 
   setActiveConversationId(conversationId: string | null) {
     this.activeConversationId = conversationId;
+  }
+
+  getLastUsageSample(): UsageSample | null {
+    return this.lastUsageSample;
   }
 
   // Send a message with automatic retry for transient errors.
@@ -149,6 +161,7 @@ export class AgentController {
     this.currentToolCalls = toolCalls;  // Store reference for subagent matching.
     let finalContent = "";
     let messageId = this.generateId();
+    this.lastUsageSample = null;
 
     try {
       // Build environment with API key and base URL if set in settings.
@@ -284,6 +297,41 @@ export class AgentController {
           const resultMsg = message as SDKResultMessage;
           if (resultMsg.subtype === "success") {
             logger.info("AgentController", `Query completed: ${resultMsg.num_turns} turns, $${resultMsg.total_cost_usd.toFixed(4)}`);
+            const usage = resultMsg.usage as any;
+            const inputTokens = Number(
+              usage?.inputTokens ??
+              usage?.input_tokens ??
+              0
+            );
+            const outputTokens = Number(
+              usage?.outputTokens ??
+              usage?.output_tokens ??
+              0
+            );
+            const cacheReadInputTokens = Number(
+              usage?.cacheReadInputTokens ??
+              usage?.cache_read_input_tokens ??
+              0
+            );
+            const cacheCreationInputTokens = Number(
+              usage?.cacheCreationInputTokens ??
+              usage?.cache_creation_input_tokens ??
+              0
+            );
+            const totalTokens =
+              inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+            this.lastUsageSample = {
+              costUsd: resultMsg.total_cost_usd || 0,
+              inputTokens,
+              outputTokens,
+              totalTokens,
+            };
+            void this.plugin.recordUsageEvent({
+              timestamp: Date.now(),
+              costUsd: this.lastUsageSample.costUsd,
+              inputTokens: this.lastUsageSample.inputTokens,
+              outputTokens: this.lastUsageSample.outputTokens,
+            });
             // Final result text may be in resultMsg.result.
             if (resultMsg.result && !finalContent) {
               finalContent = resultMsg.result;

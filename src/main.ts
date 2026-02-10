@@ -1,5 +1,5 @@
 import { Plugin, WorkspaceLeaf, Notice, ItemView } from "obsidian";
-import { ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE } from "./types";
+import { ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE, UsageEvent } from "./types";
 import { ChatView } from "./views/ChatView";
 import { ClaudeCodeSettingTab } from "./settings/SettingsTab";
 import { logger } from "./utils/Logger";
@@ -123,6 +123,48 @@ export default class ClaudeCodePlugin extends Plugin {
       data.oauthToken = "";
     }
     await this.saveData(data);
+  }
+
+  getRollingUsageSummary(windowHours = 5, now = Date.now()) {
+    const windowMs = Math.max(1, windowHours) * 60 * 60 * 1000;
+    const cutoff = now - windowMs;
+    const events = (this.settings.usageEvents || []).filter((event) => event.timestamp >= cutoff);
+
+    return events.reduce(
+      (acc, event) => {
+        acc.costUsd += event.costUsd;
+        acc.inputTokens += event.inputTokens;
+        acc.outputTokens += event.outputTokens;
+        return acc;
+      },
+      {
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+      }
+    );
+  }
+
+  async recordUsageEvent(event: UsageEvent) {
+    if (!Number.isFinite(event.timestamp) || !Number.isFinite(event.costUsd)) {
+      return;
+    }
+
+    const now = Date.now();
+    const retentionMs = 7 * 24 * 60 * 60 * 1000;
+    const cutoff = now - retentionMs;
+    const existing = this.settings.usageEvents || [];
+    const pruned = existing.filter((entry) => entry.timestamp >= cutoff);
+
+    pruned.push({
+      timestamp: event.timestamp,
+      costUsd: Math.max(0, event.costUsd),
+      inputTokens: Math.max(0, event.inputTokens || 0),
+      outputTokens: Math.max(0, event.outputTokens || 0),
+    });
+
+    this.settings.usageEvents = pruned;
+    await this.saveSettings();
   }
 
   // Get existing chat leaf if any.

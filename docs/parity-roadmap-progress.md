@@ -43,3 +43,9 @@ Branch: `codex/parity-roadmap-phase1`
 - [x] Add `/cost` command for local conversation usage diagnostics.
 - [x] Add `/model` command to inspect and set the active model in-chat.
 - [x] Include usage totals in `/status` output for faster session auditing.
+
+## Phase 5 - Header Telemetry Parity
+
+- [x] Add a top-of-chat rolling 5-hour usage bar.
+- [x] Add a top-of-chat context usage bar tied to conversation token usage.
+- [x] Persist rolling usage samples and expose configurable 5-hour budget in settings.
