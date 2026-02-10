@@ -220,6 +220,7 @@ export class AgentController {
           maxBudgetUsd: this.plugin.settings.maxBudgetPerSession,
 
           maxTurns: this.plugin.settings.maxTurns,
+          permissionMode: this.plugin.settings.permissionMode,
 
           // Resume session if available.
           resume: this.sessionId ?? undefined,
@@ -500,7 +501,22 @@ export class AgentController {
     toolName: string,
     input: any
   ): Promise<{ behavior: "allow"; updatedInput: any } | { behavior: "deny"; message: string }> {
-    // Auto-approve read-only operations.
+    const permissionMode = this.plugin.settings.permissionMode;
+
+    if (permissionMode === "bypassPermissions") {
+      return { behavior: "allow", updatedInput: input };
+    }
+
+    if (permissionMode === "plan") {
+      return { behavior: "deny", message: "Plan mode is enabled. Tool execution is disabled." };
+    }
+
+    // Check if tool is in the always-allowed list (persistent setting).
+    if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) {
+      return { behavior: "allow", updatedInput: input };
+    }
+
+    // Read-only operations can be auto-approved based on settings.
     const readOnlyTools = [
       "Read",
       "Glob",
@@ -513,7 +529,19 @@ export class AgentController {
     ];
 
     if (readOnlyTools.includes(toolName)) {
-      return { behavior: "allow", updatedInput: input };
+      if (this.plugin.settings.autoApproveVaultReads) {
+        return { behavior: "allow", updatedInput: input };
+      }
+      if (this.approvedTools.has(toolName)) {
+        return { behavior: "allow", updatedInput: input };
+      }
+
+      const result = await this.showPermissionModal(toolName, input, "low");
+      if (result.approved) {
+        await this.handlePermissionChoice(toolName, result.choice);
+        return { behavior: "allow", updatedInput: input };
+      }
+      return { behavior: "deny", message: "User denied file read permission" };
     }
 
     // Auto-approve Obsidian UI tools (safe operations).
@@ -529,16 +557,13 @@ export class AgentController {
       return { behavior: "allow", updatedInput: input };
     }
 
-    // Check if tool is in the always-allowed list (persistent setting).
-    if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) {
-      return { behavior: "allow", updatedInput: input };
-    }
-
     // Check settings for file write operations.
     const writeTools = ["Write", "Edit", "MultiEdit"];
     if (writeTools.includes(toolName)) {
+      const autoApproveWrites =
+        permissionMode === "acceptEdits" || this.plugin.settings.autoApproveVaultWrites;
       const shouldReviewDiff =
-        this.plugin.settings.reviewEditsWithDiff || !this.plugin.settings.autoApproveVaultWrites;
+        this.plugin.settings.reviewEditsWithDiff || !autoApproveWrites;
 
       if (shouldReviewDiff) {
         const diffResult = await this.buildDiffForTool(toolName, input);
@@ -560,7 +585,7 @@ export class AgentController {
         }
       }
 
-      if (this.plugin.settings.autoApproveVaultWrites) {
+      if (autoApproveWrites) {
         const diffResult = await this.buildDiffForTool(toolName, input);
         if (diffResult?.backupPath) {
           const key = this.buildToolEditKey(toolName, input);

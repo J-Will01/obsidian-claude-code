@@ -19,6 +19,7 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     // AgentController settings.
     maxBudgetPerSession: 5.0,
     maxTurns: 10,
+    permissionMode: "default",
     autoApproveVaultWrites: true,
     requireBashApproval: false,
     reviewEditsWithDiff: false,
@@ -69,6 +70,7 @@ export interface MockPluginSettings {
   // AgentController settings.
   maxBudgetPerSession: number;
   maxTurns: number;
+  permissionMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   autoApproveVaultWrites: boolean;
   requireBashApproval: boolean;
   reviewEditsWithDiff: boolean;

@@ -297,6 +297,23 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Permission mode")
+      .setDesc("SDK-level permission behavior")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("default", "Default (prompt as needed)")
+          .addOption("acceptEdits", "Accept Edits (auto-approve file edits)")
+          .addOption("plan", "Plan (disable tool execution)")
+          .addOption("bypassPermissions", "Bypass (allow all tools)")
+          .setValue(this.plugin.settings.permissionMode || "default")
+          .onChange(async (value) => {
+            this.plugin.settings.permissionMode =
+              value as "default" | "acceptEdits" | "plan" | "bypassPermissions";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Show project controls panel")
       .setDesc("Display model, budget, skills, and context controls above chat")
       .addToggle((toggle) =>

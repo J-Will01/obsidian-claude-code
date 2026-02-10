@@ -405,9 +405,129 @@ export class ChatView extends ItemView {
     this.chatInput = new ChatInput(this.inputContainerEl, {
       onSend: (message) => this.handleSendMessage(message),
       onCancel: () => this.handleCancelStreaming(),
+      onCommand: (command) => {
+        void this.handleInputCommand(command);
+      },
       isStreaming: () => this.isStreaming,
       plugin: this.plugin,
     });
+  }
+
+  private async handleInputCommand(command: string) {
+    logger.debug("ChatView", "Handling input command", { command });
+    switch (command) {
+      case "new":
+      case "clear":
+        await this.startNewConversation();
+        break;
+      case "status":
+        await this.showStatusMessage();
+        break;
+      case "permissions":
+        await this.showPermissionsMessage();
+        break;
+      case "mcp":
+        await this.showMcpMessage();
+        break;
+      default:
+        break;
+    }
+  }
+
+  private async showStatusMessage() {
+    const conv = this.conversationManager.getCurrentConversation();
+    const auth = this.plugin.getAuthStatus();
+    const activeMcpServers = this.plugin.settings.additionalMcpServers
+      .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
+      .map((server) => server.name);
+
+    const lines = [
+      `- Model: \`${this.plugin.settings.model}\``,
+      `- Permission mode: \`${this.plugin.settings.permissionMode}\``,
+      `- Max turns: \`${this.plugin.settings.maxTurns}\``,
+      `- Budget: \`$${this.plugin.settings.maxBudgetPerSession.toFixed(2)}\``,
+      `- Auth: \`${auth.label}\``,
+      `- Conversation: \`${conv?.title || "New Conversation"}\``,
+      `- Session ID: \`${this.agentController.getSessionId() || "none"}\``,
+      `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
+    ];
+
+    await this.appendLocalAssistantMessage("Session Status", lines.join("\n"));
+  }
+
+  private async showPermissionsMessage() {
+    const mode = this.plugin.settings.permissionMode;
+    const lines = [
+      `- Permission mode: \`${mode}\``,
+      `- Auto-approve reads: \`${this.plugin.settings.autoApproveVaultReads}\``,
+      `- Auto-approve writes: \`${this.plugin.settings.autoApproveVaultWrites}\``,
+      `- Require Bash approval: \`${this.plugin.settings.requireBashApproval}\``,
+      `- Review edits with diff: \`${this.plugin.settings.reviewEditsWithDiff}\``,
+      `- Always-allowed tools: \`${this.plugin.settings.alwaysAllowedTools.length > 0 ? this.plugin.settings.alwaysAllowedTools.join(", ") : "none"}\``,
+    ];
+
+    if (mode === "plan") {
+      lines.push("- Note: plan mode denies all tool execution.");
+    } else if (mode === "acceptEdits") {
+      lines.push("- Note: acceptEdits mode auto-approves file edits.");
+    } else if (mode === "bypassPermissions") {
+      lines.push("- Note: bypassPermissions mode allows all tools.");
+    }
+
+    await this.appendLocalAssistantMessage("Permission Status", lines.join("\n"));
+  }
+
+  private async showMcpMessage() {
+    const additional = this.plugin.settings.additionalMcpServers;
+    const lines = ["- Built-in: `obsidian` (enabled)"];
+
+    if (additional.length === 0) {
+      lines.push("- Additional servers: `none`");
+    } else {
+      for (const server of additional) {
+        const approved = this.plugin.settings.approvedMcpServers.includes(server.name);
+        const state = !server.enabled ? "disabled" : approved ? "enabled" : "needs approval";
+        lines.push(`- ${server.name}: \`${state}\``);
+      }
+    }
+
+    await this.appendLocalAssistantMessage("MCP Status", lines.join("\n"));
+  }
+
+  private async appendLocalAssistantMessage(title: string, content: string) {
+    const shouldPin = this.isNearBottom();
+    const message: ChatMessage = {
+      id: this.generateId(),
+      role: "assistant",
+      content: `### ${title}\n\n${content}`,
+      timestamp: Date.now(),
+    };
+
+    this.messages.push(message);
+
+    if (this.messagesContainerEl.querySelector(".claude-code-empty-state")) {
+      this.messagesContainerEl.empty();
+      this.messageList = new MessageList(this.messagesContainerEl, this.plugin);
+      this.messageList.render(this.messages);
+    } else {
+      this.messageList.addMessage(message);
+    }
+
+    if (shouldPin) {
+      this.scrollToBottom();
+    }
+
+    try {
+      await this.conversationManager.addMessage(message, {
+        role: "assistant",
+        content: message.content,
+      });
+      (this.leaf as any).updateHeader?.();
+      this.updateConversationDisplay();
+      this.refreshProjectControls();
+    } catch (error) {
+      logger.warn("ChatView", "Failed to persist local assistant message", { error: String(error) });
+    }
   }
 
   private async handleSendMessage(content: string) {

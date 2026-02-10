@@ -54,7 +54,7 @@ The settings page shows which authentication method is active.
 
 Toggle the sidebar with the ribbon icon or `Cmd+Shift+C`. Type your message and press Enter.
 
-Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context.
+Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context, and `/status` `/permissions` `/mcp` show local session diagnostics.
 
 When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
 
@@ -120,6 +120,7 @@ Debug logs are written to `~/.obsidian-claude-code/debug.log`.
 - **Streaming updates:** real-time partial response rendering.
 - **Review edits with diff:** show unified diffs and allow revert from backup.
 - **Project Controls panel:** model/budget/turns/auth/skills + context pinning actions.
+- **Permission mode:** choose `default`, `acceptEdits`, `plan`, or `bypassPermissions`.
 - **Keychain storage:** store API keys in the OS keychain when supported.
 - **Additional MCP servers:** add/approve extra MCP server configs via JSON.
 

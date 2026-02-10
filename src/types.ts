@@ -31,6 +31,7 @@ export interface ClaudeCodeSettings {
 
   // Agent SDK settings.
   maxTurns: number;
+  permissionMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
   // MCP servers.
   additionalMcpServers: McpServerSetting[];
@@ -45,7 +46,7 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   model: "sonnet",
   storeApiKeyInKeychain: false,
   autoApproveVaultReads: true,
-  autoApproveVaultWrites: true,  // Default to auto-approve for better UX.
+  autoApproveVaultWrites: false,
   requireBashApproval: true,
   reviewEditsWithDiff: false,
   alwaysAllowedTools: [],
@@ -54,6 +55,7 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   maxBudgetPerSession: 10.0,
   maxPinnedContextChars: 8000,
   maxTurns: 50,
+  permissionMode: "default",
   additionalMcpServers: [],
   approvedMcpServers: [],
 };

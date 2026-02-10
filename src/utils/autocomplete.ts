@@ -58,6 +58,27 @@ export const SLASH_COMMANDS: Suggestion[] = [
     description: "Show current context",
     icon: "info",
   },
+  {
+    type: "command",
+    value: "/status",
+    label: "/status",
+    description: "Show session status",
+    icon: "activity",
+  },
+  {
+    type: "command",
+    value: "/permissions",
+    label: "/permissions",
+    description: "Show permission settings",
+    icon: "shield",
+  },
+  {
+    type: "command",
+    value: "/mcp",
+    label: "/mcp",
+    description: "Show MCP server status",
+    icon: "plug",
+  },
 ];
 
 /**

@@ -23,6 +23,9 @@ describe("autocomplete utilities", () => {
       expect(commandValues).toContain("/file");
       expect(commandValues).toContain("/search");
       expect(commandValues).toContain("/context");
+      expect(commandValues).toContain("/status");
+      expect(commandValues).toContain("/permissions");
+      expect(commandValues).toContain("/mcp");
     });
 
     it("should have type 'command' for all items", () => {

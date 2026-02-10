@@ -177,6 +177,18 @@ export class ChatInput {
       case "/context":
         this.textareaEl.value = "Show me the current context and files being used.";
         break;
+      case "/status":
+        this.options.onCommand?.("status");
+        this.textareaEl.value = "";
+        break;
+      case "/permissions":
+        this.options.onCommand?.("permissions");
+        this.textareaEl.value = "";
+        break;
+      case "/mcp":
+        this.options.onCommand?.("mcp");
+        this.textareaEl.value = "";
+        break;
       default:
         this.textareaEl.value = command + " ";
     }
