@@ -24,6 +24,8 @@ describe("autocomplete utilities", () => {
       expect(commandValues).toContain("/search");
       expect(commandValues).toContain("/context");
       expect(commandValues).toContain("/status");
+      expect(commandValues).toContain("/cost");
+      expect(commandValues).toContain("/model");
       expect(commandValues).toContain("/permissions");
       expect(commandValues).toContain("/mcp");
       expect(commandValues).toContain("/rewind");

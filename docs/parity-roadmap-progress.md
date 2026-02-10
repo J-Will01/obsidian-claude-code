@@ -37,3 +37,9 @@ Branch: `codex/parity-roadmap-phase1`
 - [x] Re-run full test suite after phase 1 changes.
 - [x] Add component-level tests for real slash command execution flow.
 - [x] Expand end-to-end style tests for permission modal behavior.
+
+## Phase 4 - Extended CLI Command Parity
+
+- [x] Add `/cost` command for local conversation usage diagnostics.
+- [x] Add `/model` command to inspect and set the active model in-chat.
+- [x] Include usage totals in `/status` output for faster session auditing.

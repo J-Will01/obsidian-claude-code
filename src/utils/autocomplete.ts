@@ -67,6 +67,20 @@ export const SLASH_COMMANDS: Suggestion[] = [
   },
   {
     type: "command",
+    value: "/cost",
+    label: "/cost",
+    description: "Show conversation token and cost usage",
+    icon: "wallet",
+  },
+  {
+    type: "command",
+    value: "/model",
+    label: "/model [name]",
+    description: "Show or change the active model",
+    icon: "cpu",
+  },
+  {
+    type: "command",
     value: "/permissions",
     label: "/permissions",
     description: "Show permission settings",

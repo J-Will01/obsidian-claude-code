@@ -54,7 +54,7 @@ The settings page shows which authentication method is active.
 
 Toggle the sidebar with the ribbon icon or `Cmd+Shift+C`. Type your message and press Enter.
 
-Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context, `/status` `/permissions` `/mcp` show local session diagnostics, `/rewind` restores the latest backup from this conversation, and `/checkpoint` lists available rewind checkpoints.
+Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context, `/status` `/cost` `/permissions` `/mcp` show local session diagnostics, `/model [name]` updates the active model, `/rewind` restores the latest backup from this conversation, and `/checkpoint` lists available rewind checkpoints.
 
 When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
 

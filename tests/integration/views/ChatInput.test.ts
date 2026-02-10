@@ -396,7 +396,7 @@ describe("ChatInput", () => {
       type(textarea, "/clear");
       pressEnter(textarea);
 
-      expect(onCommand).toHaveBeenCalledWith("clear");
+      expect(onCommand).toHaveBeenCalledWith("clear", []);
       expect(onSend).not.toHaveBeenCalled();
       expect(input.getValue()).toBe("");
     });
@@ -416,7 +416,7 @@ describe("ChatInput", () => {
       type(textarea, "/rewind now");
       pressEnter(textarea);
 
-      expect(onCommand).toHaveBeenCalledWith("rewind");
+      expect(onCommand).toHaveBeenCalledWith("rewind", ["now"]);
       expect(onSend).not.toHaveBeenCalled();
       expect(input.getValue()).toBe("");
     });
@@ -453,7 +453,26 @@ describe("ChatInput", () => {
       type(textarea, "/checkpoint");
       pressEnter(textarea);
 
-      expect(onCommand).toHaveBeenCalledWith("checkpoint");
+      expect(onCommand).toHaveBeenCalledWith("checkpoint", []);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("should pass model arguments for typed /model command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/model opus");
+      pressEnter(textarea);
+
+      expect(onCommand).toHaveBeenCalledWith("model", ["opus"]);
       expect(onSend).not.toHaveBeenCalled();
     });
   });

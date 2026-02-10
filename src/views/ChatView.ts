@@ -416,16 +416,16 @@ export class ChatView extends ItemView {
     this.chatInput = new ChatInput(this.inputContainerEl, {
       onSend: (message) => this.handleSendMessage(message),
       onCancel: () => this.handleCancelStreaming(),
-      onCommand: (command) => {
-        void this.handleInputCommand(command);
+      onCommand: (command, args) => {
+        void this.handleInputCommand(command, args);
       },
       isStreaming: () => this.isStreaming,
       plugin: this.plugin,
     });
   }
 
-  private async handleInputCommand(command: string) {
-    logger.debug("ChatView", "Handling input command", { command });
+  private async handleInputCommand(command: string, args: string[] = []) {
+    logger.debug("ChatView", "Handling input command", { command, args });
     switch (command) {
       case "new":
       case "clear":
@@ -433,6 +433,12 @@ export class ChatView extends ItemView {
         break;
       case "status":
         await this.showStatusMessage();
+        break;
+      case "cost":
+        await this.showCostMessage();
+        break;
+      case "model":
+        await this.handleModelCommand(args);
         break;
       case "permissions":
         await this.showPermissionsMessage();
@@ -466,10 +472,58 @@ export class ChatView extends ItemView {
       `- Auth: \`${auth.label}\``,
       `- Conversation: \`${conv?.title || "New Conversation"}\``,
       `- Session ID: \`${this.agentController.getSessionId() || "none"}\``,
+      `- Total tokens: \`${conv?.metadata?.totalTokens ?? 0}\``,
+      `- Total cost: \`$${(conv?.metadata?.totalCostUsd ?? 0).toFixed(4)}\``,
       `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
     ];
 
     await this.appendLocalAssistantMessage("Session Status", lines.join("\n"));
+  }
+
+  private async showCostMessage() {
+    const conv = this.conversationManager.getCurrentConversation();
+    const totalTokens = conv?.metadata?.totalTokens ?? 0;
+    const totalCost = conv?.metadata?.totalCostUsd ?? 0;
+    const lines = [
+      `- Conversation: \`${conv?.title || "New Conversation"}\``,
+      `- Total tokens: \`${totalTokens}\``,
+      `- Total cost: \`$${totalCost.toFixed(4)}\``,
+    ];
+    await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+  }
+
+  private async handleModelCommand(args: string[]) {
+    const supportedModels = ["sonnet", "opus", "haiku"];
+    const requestedModel = args[0]?.toLowerCase();
+
+    if (!requestedModel) {
+      const lines = [
+        `- Current model: \`${this.plugin.settings.model}\``,
+        `- Available models: \`${supportedModels.join(", ")}\``,
+        "- Usage: `/model sonnet`",
+      ];
+      await this.appendLocalAssistantMessage("Model", lines.join("\n"));
+      return;
+    }
+
+    if (!supportedModels.includes(requestedModel)) {
+      await this.appendLocalAssistantMessage(
+        "Model",
+        `Unknown model \`${requestedModel}\`. Choose one of: \`${supportedModels.join(", ")}\`.`
+      );
+      return;
+    }
+
+    const previous = this.plugin.settings.model;
+    this.plugin.settings.model = requestedModel;
+    await this.plugin.saveSettings();
+    this.refreshProjectControls();
+    await this.appendLocalAssistantMessage(
+      "Model",
+      previous === requestedModel
+        ? `Model is already set to \`${requestedModel}\`.`
+        : `Model changed from \`${previous}\` to \`${requestedModel}\`.`
+    );
   }
 
   private async showPermissionsMessage() {
