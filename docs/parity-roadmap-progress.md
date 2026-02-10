@@ -49,3 +49,10 @@ Branch: `codex/parity-roadmap-phase1`
 - [x] Add a top-of-chat rolling 5-hour usage bar.
 - [x] Add a top-of-chat context usage bar tied to conversation token usage.
 - [x] Persist rolling usage samples and expose configurable 5-hour budget in settings.
+
+## Phase 6 - Actual Claude Plan Usage Parity (Experimental)
+
+- [x] Add an optional usage source that fetches real Claude plan utilization (5-hour + 7-day) via Claude Code OAuth.
+- [x] Wire 5-hour plan utilization into the header usage bar (fallback to spend/budget when unavailable).
+- [x] Show 7-day utilization row only when above a configurable threshold (default 80%).
+- [ ] Add tests for refresh caching logic.

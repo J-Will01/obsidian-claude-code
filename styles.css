@@ -135,6 +135,10 @@
   background: var(--color-green, var(--text-success));
 }
 
+.claude-code-weekly-fill {
+  background: var(--color-orange, var(--text-warning));
+}
+
 .claude-code-telemetry-value {
   font-size: 11px;
   color: var(--text-muted);

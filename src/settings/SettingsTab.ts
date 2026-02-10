@@ -355,6 +355,37 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("Header usage bar source")
+      .setDesc("Controls what the top usage bar displays. 'Auto' uses actual Claude plan usage when available (macOS Claude Code Keychain), otherwise falls back to local spend vs budget.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("auto", "Auto (plan usage if available)")
+          .addOption("budget", "Local spend vs budget")
+          .addOption("claudeAi", "Claude plan usage (OAuth, macOS)")
+          .setValue(this.plugin.settings.usageTelemetrySource || "auto")
+          .onChange(async (value) => {
+            this.plugin.settings.usageTelemetrySource = value as "auto" | "budget" | "claudeAi";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Weekly usage alert threshold (%)")
+      .setDesc("Show 7-day plan usage in the header when utilization meets or exceeds this threshold.")
+      .addText((text) =>
+        text
+          .setPlaceholder("80")
+          .setValue(String(this.plugin.settings.weeklyUsageAlertThresholdPercent ?? 80))
+          .onChange(async (value) => {
+            const parsed = parseInt(value, 10);
+            if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+              this.plugin.settings.weeklyUsageAlertThresholdPercent = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
     // MCP servers section.
     containerEl.createEl("h3", { text: "MCP Servers (Advanced)" });
 

@@ -40,6 +40,13 @@ export interface ClaudeCodeSettings {
 
   // Rolling usage telemetry.
   usageEvents: UsageEvent[];
+
+  // Usage telemetry source for the header usage bar.
+  // - auto: prefer Claude plan utilization (if available), else fall back to local spend budget.
+  // - budget: show local rolling 5-hour spend vs configured budget.
+  // - claudeAi: show Claude plan utilization from Claude Code OAuth (macOS keychain).
+  usageTelemetrySource: "auto" | "budget" | "claudeAi";
+  weeklyUsageAlertThresholdPercent: number;
 }
 
 // Default settings values.
@@ -64,6 +71,8 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   additionalMcpServers: [],
   approvedMcpServers: [],
   usageEvents: [],
+  usageTelemetrySource: "auto",
+  weeklyUsageAlertThresholdPercent: 80,
 };
 
 export interface UsageEvent {
@@ -71,6 +80,15 @@ export interface UsageEvent {
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
+}
+
+export interface ClaudeAiPlanUsageSnapshot {
+  fetchedAt: number;
+  fiveHourUtilizationPercent: number;
+  fiveHourResetsAt?: string;
+  sevenDayUtilizationPercent?: number;
+  sevenDayResetsAt?: string;
+  extraUsageEnabled?: boolean;
 }
 
 // Error classification for retry and display logic.

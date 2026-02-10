@@ -59,7 +59,7 @@ Reference specific files using `@[[filename]]` syntax—the input field provides
 When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
 
 The Project Controls panel (toggleable in settings) exposes model/budget/turn limits, auth status, active skills, MCP servers, and quick actions for pinning context like the active file or a text selection. The chat header also includes:
-- a rolling 5-hour usage bar (cost vs configured 5-hour budget),
+- a rolling 5-hour usage bar (local spend vs configured 5-hour budget, or actual Claude plan utilization when enabled),
 - a context usage bar (estimated tokens used vs model context window),
 - a checkpoint/rewind menu for restoring recent edit backups.
 
@@ -126,6 +126,7 @@ Debug logs are written to `~/.obsidian-claude-code/debug.log`.
 - **Header telemetry bars:** rolling 5-hour usage and estimated context-window usage.
 - **Permission mode:** choose `default`, `acceptEdits`, `plan`, or `bypassPermissions`.
 - **5-hour usage budget:** configure the denominator used by the usage bar.
+- **Header usage bar source:** optionally show actual Claude plan utilization (requires Claude Code logged in on macOS; uses Keychain OAuth to query the usage endpoint).
 - **Keychain storage:** store API keys in the OS keychain when supported.
 - **Additional MCP servers:** add/approve extra MCP server configs via JSON.
 

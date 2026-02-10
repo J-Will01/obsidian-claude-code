@@ -1,5 +1,5 @@
 import { Plugin, WorkspaceLeaf, Notice, ItemView } from "obsidian";
-import { ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE, UsageEvent } from "./types";
+import { ClaudeAiPlanUsageSnapshot, ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE, UsageEvent } from "./types";
 import { ChatView } from "./views/ChatView";
 import { ClaudeCodeSettingTab } from "./settings/SettingsTab";
 import { logger } from "./utils/Logger";
@@ -13,12 +13,17 @@ import {
   setKeychainOAuthToken,
 } from "./utils/Keychain";
 import { CLAUDE_ICON_NAME, registerClaudeIcon } from "./utils/icons";
+import { fetchClaudeAiPlanUsage } from "./utils/claudeAiPlanUsage";
 
 export default class ClaudeCodePlugin extends Plugin {
   settings: ClaudeCodeSettings = DEFAULT_SETTINGS;
   private readonly MAX_CHAT_WINDOWS = 5;
   private runtimeApiKey = "";
   private runtimeOAuthToken = "";
+  private claudeAiPlanUsage: ClaudeAiPlanUsageSnapshot | null = null;
+  private claudeAiPlanUsageLastFetchedAt = 0;
+  private claudeAiPlanUsageInFlight: Promise<boolean> | null = null;
+  private claudeAiPlanUsageLastError: string | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -123,6 +128,50 @@ export default class ClaudeCodePlugin extends Plugin {
       data.oauthToken = "";
     }
     await this.saveData(data);
+  }
+
+  getClaudeAiPlanUsageSnapshot(): ClaudeAiPlanUsageSnapshot | null {
+    return this.claudeAiPlanUsage;
+  }
+
+  getClaudeAiPlanUsageError(): string | null {
+    return this.claudeAiPlanUsageLastError;
+  }
+
+  async refreshClaudeAiPlanUsageIfStale(maxAgeMs = 60000): Promise<boolean> {
+    const source = this.settings.usageTelemetrySource || "auto";
+    if (source === "budget") {
+      return false;
+    }
+
+    const now = Date.now();
+    if (now - this.claudeAiPlanUsageLastFetchedAt < maxAgeMs) {
+      return false;
+    }
+
+    if (this.claudeAiPlanUsageInFlight) {
+      return this.claudeAiPlanUsageInFlight;
+    }
+
+    this.claudeAiPlanUsageInFlight = (async () => {
+      try {
+        const snapshot = await fetchClaudeAiPlanUsage();
+        this.claudeAiPlanUsage = snapshot;
+        this.claudeAiPlanUsageLastFetchedAt = now;
+        this.claudeAiPlanUsageLastError = null;
+        return true;
+      } catch (e) {
+        this.claudeAiPlanUsageLastFetchedAt = now;
+        this.claudeAiPlanUsageLastError = String(e);
+        logger.debug("Plugin", "Claude plan usage refresh failed", { error: this.claudeAiPlanUsageLastError });
+        // Keep last known snapshot if any.
+        return false;
+      } finally {
+        this.claudeAiPlanUsageInFlight = null;
+      }
+    })();
+
+    return this.claudeAiPlanUsageInFlight;
   }
 
   getRollingUsageSummary(windowHours = 5, now = Date.now()) {
