@@ -8,6 +8,7 @@ import { ConversationManager } from "../agent/ConversationManager";
 import { ConversationHistoryModal } from "./ConversationHistoryModal";
 import { logger } from "../utils/Logger";
 import { ProjectControls } from "./components/ProjectControls";
+import { CLAUDE_ICON_NAME } from "../utils/icons";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -73,7 +74,7 @@ export class ChatView extends ItemView {
   }
 
   getIcon(): string {
-    return "message-square";
+    return CLAUDE_ICON_NAME;
   }
 
   // Save view state for persistence across restarts.
@@ -165,7 +166,7 @@ export class ChatView extends ItemView {
     // Title section with conversation picker.
     const titleSection = this.headerEl.createDiv({ cls: "claude-code-header-title" });
     const iconEl = titleSection.createSpan();
-    setIcon(iconEl, "bot");
+    setIcon(iconEl, CLAUDE_ICON_NAME);
 
     // Conversation picker dropdown.
     const convPicker = titleSection.createDiv({ cls: "claude-code-conv-picker" });
@@ -390,7 +391,7 @@ export class ChatView extends ItemView {
     const emptyEl = this.messagesContainerEl.createDiv({ cls: "claude-code-empty-state" });
 
     const iconEl = emptyEl.createDiv({ cls: "claude-code-empty-state-icon" });
-    setIcon(iconEl, "message-square");
+    setIcon(iconEl, CLAUDE_ICON_NAME);
 
     const titleEl = emptyEl.createDiv({ cls: "claude-code-empty-state-title" });
     titleEl.setText("Start a conversation");

@@ -12,6 +12,7 @@ import {
   setKeychainApiKey,
   setKeychainOAuthToken,
 } from "./utils/Keychain";
+import { CLAUDE_ICON_NAME, registerClaudeIcon } from "./utils/icons";
 
 export default class ClaudeCodePlugin extends Plugin {
   settings: ClaudeCodeSettings = DEFAULT_SETTINGS;
@@ -21,6 +22,7 @@ export default class ClaudeCodePlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    registerClaudeIcon();
 
     // Initialize logger with vault path.
     const vaultPath = this.getVaultPath();
@@ -31,7 +33,7 @@ export default class ClaudeCodePlugin extends Plugin {
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
 
     // Add ribbon icon to toggle chat.
-    this.addRibbonIcon("message-square", "Claude Code", () => {
+    this.addRibbonIcon(CLAUDE_ICON_NAME, "Claude Code", () => {
       this.activateChatView();
     });
 
