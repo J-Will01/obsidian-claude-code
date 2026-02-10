@@ -383,29 +383,43 @@ export class ChatView extends ItemView {
     this.telemetryEl = this.contentEl.createDiv({ cls: "claude-code-telemetry-bars" });
 
     const usageRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
-    usageRow.createDiv({ cls: "claude-code-telemetry-label", text: "5h Usage" });
+    const usageLabel = usageRow.createDiv({ cls: "claude-code-telemetry-label" });
+    usageLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "5h Usage" });
+    usageLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "" });
     const usageTrack = usageRow.createDiv({ cls: "claude-code-telemetry-track" });
     usageTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-usage-fill" });
     usageRow.createDiv({ cls: "claude-code-telemetry-value claude-code-usage-value" });
 
     const weeklyRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row claude-code-weekly-row" });
     weeklyRow.style.display = "none";
-    weeklyRow.createDiv({ cls: "claude-code-telemetry-label", text: "7d Usage" });
+    const weeklyLabel = weeklyRow.createDiv({ cls: "claude-code-telemetry-label" });
+    weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "7d Usage" });
+    weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "" });
     const weeklyTrack = weeklyRow.createDiv({ cls: "claude-code-telemetry-track" });
     weeklyTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-weekly-fill" });
     weeklyRow.createDiv({ cls: "claude-code-telemetry-value claude-code-weekly-value" });
 
     const contextRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
-    contextRow.createDiv({ cls: "claude-code-telemetry-label", text: "Context (est.)" });
+    const contextLabel = contextRow.createDiv({ cls: "claude-code-telemetry-label" });
+    contextLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "Context" });
+    contextLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "(est.)" });
     const contextTrack = contextRow.createDiv({ cls: "claude-code-telemetry-track" });
     contextTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-context-fill" });
     contextRow.createDiv({ cls: "claude-code-telemetry-value claude-code-context-value" });
+
+    const metaRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-meta" });
+    metaRow.createDiv({ cls: "claude-code-telemetry-last-updated", text: "Last updated: --" });
+    const refreshBtn = metaRow.createEl("button", { cls: "claude-code-telemetry-refresh", attr: { "aria-label": "Refresh usage" } });
+    setIcon(refreshBtn, "refresh-cw");
+    refreshBtn.addEventListener("click", () => {
+      void this.plugin.refreshClaudeAiPlanUsageIfStale(0).then(() => this.updateTelemetryBars());
+    });
 
     this.updateTelemetryBars();
     if (this.telemetryIntervalId !== null) {
       window.clearInterval(this.telemetryIntervalId);
     }
-    this.telemetryIntervalId = window.setInterval(() => this.updateTelemetryBars(), 15000);
+    this.telemetryIntervalId = window.setInterval(() => this.updateTelemetryBars(), 30000);
   }
 
   private getModelContextWindow(model: string): number {
@@ -423,16 +437,19 @@ export class ChatView extends ItemView {
 
     const usageFill = this.telemetryEl.querySelector(".claude-code-usage-fill") as HTMLElement | null;
     const usageValue = this.telemetryEl.querySelector(".claude-code-usage-value") as HTMLElement | null;
+    const usageSubtitle = this.telemetryEl.querySelector(".claude-code-telemetry-row .claude-code-telemetry-label-subtitle") as HTMLElement | null;
     const weeklyRow = this.telemetryEl.querySelector(".claude-code-weekly-row") as HTMLElement | null;
     const weeklyFill = this.telemetryEl.querySelector(".claude-code-weekly-fill") as HTMLElement | null;
     const weeklyValue = this.telemetryEl.querySelector(".claude-code-weekly-value") as HTMLElement | null;
+    const weeklySubtitle = weeklyRow?.querySelector(".claude-code-telemetry-label-subtitle") as HTMLElement | null;
     const contextFill = this.telemetryEl.querySelector(".claude-code-context-fill") as HTMLElement | null;
     const contextValue = this.telemetryEl.querySelector(".claude-code-context-value") as HTMLElement | null;
-    if (!usageFill || !usageValue || !weeklyRow || !weeklyFill || !weeklyValue || !contextFill || !contextValue) return;
+    const lastUpdatedEl = this.telemetryEl.querySelector(".claude-code-telemetry-last-updated") as HTMLElement | null;
+    if (!usageFill || !usageValue || !weeklyRow || !weeklyFill || !weeklyValue || !contextFill || !contextValue || !lastUpdatedEl) return;
 
     const source = this.plugin.settings.usageTelemetrySource || "auto";
     if (source !== "budget") {
-      void this.plugin.refreshClaudeAiPlanUsageIfStale(60000).then((updated) => {
+      void this.plugin.refreshClaudeAiPlanUsageIfStale(30000).then((updated) => {
         if (updated) {
           this.updateTelemetryBars();
         }
@@ -449,11 +466,37 @@ export class ChatView extends ItemView {
       return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     };
 
+    const formatResetsIn = (iso?: string) => {
+      if (!iso) return null;
+      const dt = new Date(iso);
+      if (Number.isNaN(dt.getTime())) return null;
+      const deltaMs = dt.getTime() - Date.now();
+      if (deltaMs <= 0) return "Resets soon";
+      const mins = Math.max(0, Math.round(deltaMs / 60000));
+      if (mins < 60) return `Resets in ${mins} min`;
+      const hrs = Math.floor(mins / 60);
+      const rem = mins % 60;
+      return rem === 0 ? `Resets in ${hrs} hr` : `Resets in ${hrs} hr ${rem} min`;
+    };
+
+    const formatLastUpdated = (ms?: number) => {
+      if (!ms || !Number.isFinite(ms)) return "--";
+      const delta = Date.now() - ms;
+      if (delta < 5000) return "just now";
+      const secs = Math.round(delta / 1000);
+      if (secs < 60) return `${secs}s ago`;
+      const mins = Math.round(secs / 60);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.round(mins / 60);
+      return `${hrs}h ago`;
+    };
+
     if (usePlanUsage && snapshot) {
       const usagePercent = Math.max(0, Math.min(100, snapshot.fiveHourUtilizationPercent));
       usageFill.style.width = `${usagePercent}%`;
-      const reset = formatResetTime(snapshot.fiveHourResetsAt);
-      usageValue.setText(`${usagePercent.toFixed(0)}%${reset ? ` (resets ${reset})` : ""}`);
+      usageValue.setText(`${usagePercent.toFixed(0)}% used`);
+      const resetsIn = formatResetsIn(snapshot.fiveHourResetsAt);
+      if (usageSubtitle) usageSubtitle.setText(resetsIn ?? "");
 
       const threshold = Math.max(0, Math.min(100, this.plugin.settings.weeklyUsageAlertThresholdPercent ?? 80));
       const weeklyPercent = snapshot.sevenDayUtilizationPercent;
@@ -462,14 +505,18 @@ export class ChatView extends ItemView {
       if (showWeekly && typeof weeklyPercent === "number") {
         const clamped = Math.max(0, Math.min(100, weeklyPercent));
         weeklyFill.style.width = `${clamped}%`;
+        weeklyValue.setText(`${clamped.toFixed(0)}% used`);
         const weeklyReset = formatResetTime(snapshot.sevenDayResetsAt);
-        weeklyValue.setText(`${clamped.toFixed(0)}%${weeklyReset ? ` (resets ${weeklyReset})` : ""}`);
+        if (weeklySubtitle) weeklySubtitle.setText(weeklyReset ? `Resets ${weeklyReset}` : "");
       }
+      lastUpdatedEl.setText(`Last updated: ${formatLastUpdated(snapshot.fetchedAt)}`);
     } else {
       weeklyRow.style.display = "none";
       if (source === "claudeAi") {
         usageFill.style.width = `0%`;
         usageValue.setText("~");
+        if (usageSubtitle) usageSubtitle.setText("");
+        lastUpdatedEl.setText("Last updated: --");
       } else {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
@@ -478,12 +525,15 @@ export class ChatView extends ItemView {
         usageValue.setText(
           `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)} (${usagePercent.toFixed(0)}%)`
         );
+        if (usageSubtitle) usageSubtitle.setText("");
+        lastUpdatedEl.setText("Last updated: --");
       }
     }
 
     const conv = this.conversationManager.getCurrentConversation();
     const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
-    const usedTokens = Math.max(0, conv?.metadata?.inputTokens ?? conv?.metadata?.totalTokens ?? 0);
+    // Prefer totalTokens since it includes cache-related tokens; inputTokens can be 0 for cache-heavy sessions.
+    const usedTokens = Math.max(0, conv?.metadata?.totalTokens ?? 0, conv?.metadata?.inputTokens ?? 0);
     const contextPercent = Math.min(100, (usedTokens / contextWindow) * 100);
     contextFill.style.width = `${contextPercent}%`;
     contextValue.setText(
