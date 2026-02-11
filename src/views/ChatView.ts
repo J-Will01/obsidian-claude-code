@@ -412,7 +412,7 @@ export class ChatView extends ItemView {
     const refreshBtn = metaRow.createEl("button", { cls: "claude-code-telemetry-refresh", attr: { "aria-label": "Refresh usage" } });
     setIcon(refreshBtn, "refresh-cw");
     refreshBtn.addEventListener("click", () => {
-      void this.plugin.refreshClaudeAiPlanUsageIfStale(0).then(() => this.updateTelemetryBars());
+      void this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true }).then(() => this.updateTelemetryBars());
     });
 
     this.updateTelemetryBars();
@@ -675,7 +675,7 @@ export class ChatView extends ItemView {
   }
 
   private async showUsageMessage() {
-    await this.plugin.refreshClaudeAiPlanUsageIfStale(0);
+    await this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true });
     const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
     const planErr = this.plugin.getClaudeAiPlanUsageError();
 
@@ -683,10 +683,6 @@ export class ChatView extends ItemView {
       const lines = [
         "- Claude plan usage: `unavailable`",
         planErr ? `- Last error: \`${planErr}\`` : "- Last error: `none`",
-        "",
-        "Notes:",
-        "- This uses Claude Code OAuth from macOS Keychain (`Claude Code-credentials`).",
-        "- If you see `TypeError: Failed to fetch`, it was likely blocked by CORS; the plugin prefers Obsidian `requestUrl()` now.",
       ];
       await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
       return;

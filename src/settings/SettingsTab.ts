@@ -357,12 +357,12 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Header usage bar source")
-      .setDesc("Controls what the top usage bar displays. 'Auto' uses actual Claude plan usage when available (macOS Claude Code Keychain), otherwise falls back to local spend vs budget.")
+      .setDesc("Controls what the top usage bar displays. 'Auto' uses plan usage when available, otherwise falls back to local spend vs budget.")
       .addDropdown((dropdown) =>
         dropdown
           .addOption("auto", "Auto (plan usage if available)")
           .addOption("budget", "Local spend vs budget")
-          .addOption("claudeAi", "Claude plan usage (OAuth, macOS)")
+          .addOption("claudeAi", "Claude plan usage (experimental)")
           .setValue(this.plugin.settings.usageTelemetrySource || "auto")
           .onChange(async (value) => {
             this.plugin.settings.usageTelemetrySource = value as "auto" | "budget" | "claudeAi";

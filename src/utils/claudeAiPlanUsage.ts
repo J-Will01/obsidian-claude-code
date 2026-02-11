@@ -105,11 +105,9 @@ export async function fetchClaudeAiPlanUsage(): Promise<ClaudeAiPlanUsageSnapsho
   const url = "https://api.anthropic.com/api/oauth/usage";
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
-    // This header is required for this endpoint to accept the token in practice.
     "anthropic-beta": "oauth-2025-04-20",
     Accept: "application/json",
     "Content-Type": "application/json",
-    // Mimic a Claude Code UA to reduce the chance of server-side blocking.
     "User-Agent": "claude-code/2.1.25",
   };
 

@@ -138,9 +138,18 @@ export default class ClaudeCodePlugin extends Plugin {
     return this.claudeAiPlanUsageLastError;
   }
 
-  async refreshClaudeAiPlanUsageIfStale(maxAgeMs = 60000): Promise<boolean> {
+  async refreshClaudeAiPlanUsageIfStale(
+    maxAgeMs = 60000,
+    opts?: {
+      /**
+       * When the header is configured to show local spend ("budget"), we still want
+       * to allow explicit user-initiated refreshes (eg /usage or a manual refresh click).
+       */
+      allowWhenBudget?: boolean;
+    }
+  ): Promise<boolean> {
     const source = this.settings.usageTelemetrySource || "auto";
-    if (source === "budget") {
+    if (source === "budget" && !opts?.allowWhenBudget) {
       return false;
     }
 

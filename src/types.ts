@@ -44,7 +44,7 @@ export interface ClaudeCodeSettings {
   // Usage telemetry source for the header usage bar.
   // - auto: prefer Claude plan utilization (if available), else fall back to local spend budget.
   // - budget: show local rolling 5-hour spend vs configured budget.
-  // - claudeAi: show Claude plan utilization from Claude Code OAuth (macOS keychain).
+  // - claudeAi: show Claude plan utilization when available.
   usageTelemetrySource: "auto" | "budget" | "claudeAi";
   weeklyUsageAlertThresholdPercent: number;
 }
