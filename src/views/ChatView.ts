@@ -791,6 +791,9 @@ export class ChatView extends ItemView {
       case "status":
         await this.showStatusMessage();
         break;
+      case "doctor":
+        await this.showDoctorMessage();
+        break;
       case "cost":
         await this.showCostMessage();
         break;
@@ -874,7 +877,7 @@ export class ChatView extends ItemView {
     const commandGroups: Array<{ title: string; ids: string[] }> = [
       {
         title: "Session & Diagnostics",
-        ids: ["help", "status", "cost", "usage", "context", "model", "permissions", "mcp", "logs"],
+        ids: ["help", "status", "doctor", "cost", "usage", "context", "model", "permissions", "mcp", "logs"],
       },
       {
         title: "Conversation",
@@ -1026,6 +1029,78 @@ export class ChatView extends ItemView {
     ].filter(Boolean);
 
     await this.appendLocalAssistantMessage("Session Status", lines.join("\n"));
+  }
+
+  private async showDoctorMessage() {
+    await this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true });
+
+    const auth = this.plugin.getAuthStatus();
+    const conv = this.conversationManager.getCurrentConversation();
+    const sessionId = this.agentController.getSessionId();
+    const supportedModels = this.agentController.getSupportedModels();
+    const supportedCommands = this.agentController.getSupportedCommands();
+    const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const planErr = this.plugin.getClaudeAiPlanUsageError();
+    const approvedMcp = new Set(this.plugin.settings.approvedMcpServers);
+    const activeMcpServers = this.plugin.settings.additionalMcpServers.filter(
+      (server) => server.enabled && approvedMcp.has(server.name)
+    );
+    const pendingMcpApprovals = this.plugin.settings.additionalMcpServers.filter(
+      (server) => server.enabled && !approvedMcp.has(server.name)
+    );
+    const disabledMcpServers = this.plugin.settings.additionalMcpServers.filter((server) => !server.enabled);
+    const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
+    const contextEstimate = computeContextUsageEstimate({
+      contextWindow,
+      metadata: conv?.metadata,
+      history: this.conversationManager.getHistory(),
+      pinnedContext: this.conversationManager.getPinnedContext(),
+    });
+    const permissionSignals = this.getPermissionPromptSignals(Date.now());
+    const currentModel = this.plugin.settings.model;
+    const modelStatus = supportedModels.length === 0
+      ? "unknown (SDK metadata not loaded yet)"
+      : supportedModels.includes(currentModel)
+        ? "supported"
+        : "not in discovered model list";
+
+    const recommendations: string[] = [];
+    if (!auth.hasEnvApiKey && !auth.hasStoredApiKey && !auth.hasOAuthToken) {
+      recommendations.push("- Configure API key or OAuth in settings.");
+    }
+    if (!sessionId) {
+      recommendations.push("- Send one message to initialize a Claude session.");
+    }
+    if (contextEstimate.percentUsed >= 80) {
+      recommendations.push("- Context is high. Run `/context` and trim with `/clear-pins`.");
+    }
+    if (pendingMcpApprovals.length > 0) {
+      recommendations.push("- MCP approvals pending. Run `/mcp` and approve needed servers.");
+    }
+    if (permissionSignals >= 2 && this.plugin.settings.permissionMode === "default") {
+      recommendations.push("- Permission prompts are repeating. Review `/permissions`.");
+    }
+    if (planErr) {
+      recommendations.push("- Plan usage fetch has errors. Run `/usage` for details.");
+    }
+
+    const lines = [
+      "- Summary",
+      `- Auth: \`${auth.label}\``,
+      `- Session: \`${sessionId ? "connected" : "not connected"}\``,
+      `- Model: \`${currentModel}\` (${modelStatus})`,
+      `- Permission mode: \`${this.plugin.settings.permissionMode}\``,
+      `- Context usage: \`${contextEstimate.percentUsed.toFixed(0)}%\``,
+      `- SDK metadata: \`${supportedModels.length}\` models, \`${supportedCommands.length}\` commands`,
+      `- MCP: \`${activeMcpServers.length}\` active, \`${pendingMcpApprovals.length}\` pending approval, \`${disabledMcpServers.length}\` disabled`,
+      `- Plan usage data: \`${plan ? "available" : "unavailable"}\`${planErr ? ` (error: ${planErr})` : ""}`,
+      "",
+      "- Recommended actions",
+      ...(recommendations.length > 0 ? recommendations : ["- No blocking issues detected."]),
+      "- Run `/status` for full session details.",
+    ];
+
+    await this.appendLocalAssistantMessage("Doctor", lines.join("\n"));
   }
 
   private async showUsageMessage() {

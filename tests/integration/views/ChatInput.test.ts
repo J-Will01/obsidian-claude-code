@@ -678,9 +678,9 @@ describe("ChatInput", () => {
         getAdditionalCommandSuggestions: () => [
           {
             type: "command",
-            value: "/doctor",
-            label: "/doctor [scope]",
-            description: "Run diagnostics",
+            value: "/sprint",
+            label: "/sprint [goal]",
+            description: "Run sprint planning",
             icon: "terminal",
           },
         ],
@@ -688,14 +688,14 @@ describe("ChatInput", () => {
       });
 
       const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
-      type(textarea, "/doctor");
+      type(textarea, "/sprint");
       pressEnter(textarea);
-      expect(textarea.value).toBe("/doctor ");
+      expect(textarea.value).toBe("/sprint ");
       expect(onCommand).not.toHaveBeenCalled();
       expect(onSend).not.toHaveBeenCalled();
 
       pressEnter(textarea);
-      expect(onSend).toHaveBeenCalledWith("/doctor");
+      expect(onSend).toHaveBeenCalledWith("/sprint");
       expect(onCommand).not.toHaveBeenCalled();
     });
 

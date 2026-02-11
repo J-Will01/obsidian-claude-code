@@ -138,6 +138,14 @@ const COMMAND_DEFINITIONS: SlashCommandDefinition[] = [
     telemetryKey: "slash_status",
   },
   {
+    id: "doctor",
+    command: "/doctor",
+    description: "Run diagnostics and suggested fixes",
+    icon: "wrench",
+    handler: "local",
+    telemetryKey: "slash_doctor",
+  },
+  {
     id: "cost",
     command: "/cost",
     description: "Show conversation token and cost usage",
