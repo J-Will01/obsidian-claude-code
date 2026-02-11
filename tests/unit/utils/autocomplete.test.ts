@@ -21,6 +21,13 @@ describe("autocomplete utilities", () => {
       expect(commandValues).toContain("/clear");
       expect(commandValues).toContain("/new");
       expect(commandValues).toContain("/file");
+      expect(commandValues).toContain("/rename");
+      expect(commandValues).toContain("/pin-file");
+      expect(commandValues).toContain("/pin-selection");
+      expect(commandValues).toContain("/pin-backlinks");
+      expect(commandValues).toContain("/pins");
+      expect(commandValues).toContain("/clear-pins");
+      expect(commandValues).toContain("/logs");
       expect(commandValues).toContain("/search");
       expect(commandValues).toContain("/context");
       expect(commandValues).toContain("/status");

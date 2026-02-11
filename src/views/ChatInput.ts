@@ -17,6 +17,14 @@ const LOCAL_COMMANDS = new Set([
   "status",
   "cost",
   "usage",
+  "file",
+  "rename",
+  "pin-file",
+  "pin-selection",
+  "pin-backlinks",
+  "pins",
+  "clear-pins",
+  "logs",
   "model",
   "permissions",
   "mcp",
@@ -181,7 +189,35 @@ export class ChatInput {
         this.textareaEl.value = "";
         break;
       case "/file":
-        this.handleAddFile();
+        this.options.onCommand?.("file", []);
+        this.textareaEl.value = "";
+        break;
+      case "/rename":
+        this.options.onCommand?.("rename", []);
+        this.textareaEl.value = "";
+        break;
+      case "/pin-file":
+        this.options.onCommand?.("pin-file", []);
+        this.textareaEl.value = "";
+        break;
+      case "/pin-selection":
+        this.options.onCommand?.("pin-selection", []);
+        this.textareaEl.value = "";
+        break;
+      case "/pin-backlinks":
+        this.options.onCommand?.("pin-backlinks", []);
+        this.textareaEl.value = "";
+        break;
+      case "/pins":
+        this.options.onCommand?.("pins", []);
+        this.textareaEl.value = "";
+        break;
+      case "/clear-pins":
+        this.options.onCommand?.("clear-pins", []);
+        this.textareaEl.value = "";
+        break;
+      case "/logs":
+        this.options.onCommand?.("logs", []);
         this.textareaEl.value = "";
         break;
       case "/search":

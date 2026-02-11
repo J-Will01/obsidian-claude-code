@@ -321,6 +321,26 @@ export class ConversationManager {
     return this.currentConversation;
   }
 
+  async renameConversation(id: string, title: string): Promise<boolean> {
+    await this.initialize();
+    const nextTitle = title.trim();
+    if (!nextTitle) return false;
+
+    let conversation: StoredConversation | null = null;
+    if (this.currentConversation?.id === id) {
+      conversation = this.currentConversation;
+    } else {
+      conversation = await this.loadConversationById(id);
+      if (!conversation) return false;
+    }
+
+    conversation.title = nextTitle;
+    conversation.updatedAt = Date.now();
+    await this.saveConversation(conversation);
+    await this.updateIndexEntry(conversation);
+    return true;
+  }
+
   getPinnedContext(): MessageContext[] {
     return this.currentConversation?.pinnedContext ?? [];
   }

@@ -475,5 +475,62 @@ describe("ChatInput", () => {
       expect(onCommand).toHaveBeenCalledWith("model", ["opus"]);
       expect(onSend).not.toHaveBeenCalled();
     });
+
+    it("should execute /pin-file as a local command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/pin-file");
+      pressEnter(textarea);
+
+      expect(onCommand).toHaveBeenCalledWith("pin-file", []);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("should pass args for typed /pin-backlinks command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/pin-backlinks 5");
+      pressEnter(textarea);
+
+      expect(onCommand).toHaveBeenCalledWith("pin-backlinks", ["5"]);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("should pass args for typed /rename command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/rename Sprint planning");
+      pressEnter(textarea);
+
+      expect(onCommand).toHaveBeenCalledWith("rename", ["Sprint", "planning"]);
+      expect(onSend).not.toHaveBeenCalled();
+    });
   });
 });
