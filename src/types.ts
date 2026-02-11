@@ -24,6 +24,7 @@ export interface ClaudeCodeSettings {
   // UI Preferences.
   sidebarWidth: number;
   showProjectControlsPanel: boolean;
+  showClaudeMdFileExplorerIcon: boolean;
 
   // Limits.
   maxBudgetPerSession: number;
@@ -63,6 +64,7 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   alwaysAllowedTools: [],
   sidebarWidth: 400,
   showProjectControlsPanel: true,
+  showClaudeMdFileExplorerIcon: true,
   maxBudgetPerSession: 10.0,
   maxPinnedContextChars: 8000,
   fiveHourUsageBudgetUsd: 10.0,

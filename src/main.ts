@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, Notice, ItemView } from "obsidian";
+import { Plugin, WorkspaceLeaf, Notice, ItemView, setIcon } from "obsidian";
 import { ClaudeAiPlanUsageSnapshot, ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE, UsageEvent } from "./types";
 import { ChatView } from "./views/ChatView";
 import { ClaudeCodeSettingTab } from "./settings/SettingsTab";
@@ -18,12 +18,16 @@ import { fetchClaudeAiPlanUsage } from "./utils/claudeAiPlanUsage";
 export default class ClaudeCodePlugin extends Plugin {
   settings: ClaudeCodeSettings = DEFAULT_SETTINGS;
   private readonly MAX_CHAT_WINDOWS = 5;
+  private readonly CLAUDE_MD_FILE_NAME = "claude.md";
+  private readonly CLAUDE_MD_EXPLORER_ICON_CLASS = "claude-code-claude-md-file-icon";
   private runtimeApiKey = "";
   private runtimeOAuthToken = "";
   private claudeAiPlanUsage: ClaudeAiPlanUsageSnapshot | null = null;
   private claudeAiPlanUsageLastFetchedAt = 0;
   private claudeAiPlanUsageInFlight: Promise<boolean> | null = null;
   private claudeAiPlanUsageLastError: string | null = null;
+  private claudeMdFileExplorerObserver: MutationObserver | null = null;
+  private claudeMdFileExplorerRefreshTimer: number | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -83,6 +87,9 @@ export default class ClaudeCodePlugin extends Plugin {
 
     // Ensure chat view exists on layout ready.
     this.app.workspace.onLayoutReady(() => {
+      this.initializeClaudeMdFileExplorerIconSync();
+      this.refreshClaudeMdFileExplorerIcons();
+
       const existingLeaf = this.getExistingChatLeaf();
       if (existingLeaf) {
         logger.debug("Plugin", "Chat view restored from workspace layout");
@@ -97,6 +104,14 @@ export default class ClaudeCodePlugin extends Plugin {
   }
 
   onunload() {
+    this.removeClaudeMdFileExplorerIcons();
+    this.claudeMdFileExplorerObserver?.disconnect();
+    this.claudeMdFileExplorerObserver = null;
+    if (this.claudeMdFileExplorerRefreshTimer !== null) {
+      window.clearTimeout(this.claudeMdFileExplorerRefreshTimer);
+      this.claudeMdFileExplorerRefreshTimer = null;
+    }
+
     // Clean up chat views.
     this.app.workspace.detachLeavesOfType(CHAT_VIEW_TYPE);
     logger.info("Plugin", "Claude Code plugin unloaded");
@@ -223,6 +238,108 @@ export default class ClaudeCodePlugin extends Plugin {
 
     this.settings.usageEvents = pruned;
     await this.saveSettings();
+  }
+
+  refreshClaudeMdFileExplorerIcons() {
+    if (!this.settings.showClaudeMdFileExplorerIcon) {
+      this.removeClaudeMdFileExplorerIcons();
+      return;
+    }
+
+    this.decorateClaudeMdFileExplorerRows();
+  }
+
+  private initializeClaudeMdFileExplorerIconSync() {
+    if (this.claudeMdFileExplorerObserver) {
+      return;
+    }
+
+    const workspaceEl = this.app.workspace.containerEl;
+    if (!workspaceEl) {
+      return;
+    }
+
+    this.claudeMdFileExplorerObserver = new MutationObserver(() => {
+      this.scheduleClaudeMdFileExplorerIconRefresh();
+    });
+    this.claudeMdFileExplorerObserver.observe(workspaceEl, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-path"],
+    });
+
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.scheduleClaudeMdFileExplorerIconRefresh();
+      })
+    );
+
+    this.register(() => {
+      if (this.claudeMdFileExplorerRefreshTimer !== null) {
+        window.clearTimeout(this.claudeMdFileExplorerRefreshTimer);
+        this.claudeMdFileExplorerRefreshTimer = null;
+      }
+      this.claudeMdFileExplorerObserver?.disconnect();
+      this.claudeMdFileExplorerObserver = null;
+    });
+  }
+
+  private scheduleClaudeMdFileExplorerIconRefresh() {
+    if (this.claudeMdFileExplorerRefreshTimer !== null) {
+      return;
+    }
+
+    this.claudeMdFileExplorerRefreshTimer = window.setTimeout(() => {
+      this.claudeMdFileExplorerRefreshTimer = null;
+      this.refreshClaudeMdFileExplorerIcons();
+    }, 0);
+  }
+
+  private decorateClaudeMdFileExplorerRows() {
+    const rows = this.app.workspace.containerEl?.querySelectorAll<HTMLElement>(
+      '.workspace-leaf-content[data-type="file-explorer"] .nav-file-title[data-path]'
+    );
+    if (!rows) {
+      return;
+    }
+
+    rows.forEach((row) => {
+      const path = row.getAttribute("data-path") || "";
+      const existingIcon = row.querySelector<HTMLElement>(`.${this.CLAUDE_MD_EXPLORER_ICON_CLASS}`);
+
+      if (!this.isClaudeMdPath(path)) {
+        existingIcon?.remove();
+        return;
+      }
+
+      if (existingIcon) {
+        return;
+      }
+
+      const iconEl = document.createElement("span");
+      iconEl.classList.add(this.CLAUDE_MD_EXPLORER_ICON_CLASS);
+      iconEl.setAttribute("aria-hidden", "true");
+      setIcon(iconEl, CLAUDE_ICON_NAME);
+
+      const contentEl = row.querySelector<HTMLElement>(".nav-file-title-content");
+      if (contentEl) {
+        row.insertBefore(iconEl, contentEl);
+      } else {
+        row.prepend(iconEl);
+      }
+    });
+  }
+
+  private removeClaudeMdFileExplorerIcons() {
+    this.app.workspace.containerEl
+      ?.querySelectorAll<HTMLElement>(`.${this.CLAUDE_MD_EXPLORER_ICON_CLASS}`)
+      .forEach((icon) => icon.remove());
+  }
+
+  private isClaudeMdPath(path: string): boolean {
+    const fileName = path.split("/").pop();
+    return fileName?.toLowerCase() === this.CLAUDE_MD_FILE_NAME;
   }
 
   // Get existing chat leaf if any.

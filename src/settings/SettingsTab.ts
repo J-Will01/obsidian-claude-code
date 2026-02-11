@@ -261,6 +261,20 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       }
     }
 
+    // Appearance section.
+    containerEl.createEl("h3", { text: "Appearance" });
+
+    new Setting(containerEl)
+      .setName("Show CLAUDE.md file explorer icon")
+      .setDesc("Display an Anthropic orange Claude icon before CLAUDE.md in the file explorer")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showClaudeMdFileExplorerIcon).onChange(async (value) => {
+          this.plugin.settings.showClaudeMdFileExplorerIcon = value;
+          await this.plugin.saveSettings();
+          this.plugin.refreshClaudeMdFileExplorerIcons();
+        })
+      );
+
     // Agent SDK Section.
     containerEl.createEl("h3", { text: "Agent Settings" });
 

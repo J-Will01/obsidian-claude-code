@@ -1,5 +1,22 @@
 /* obsidian-claude-code styles */
 
+/* File explorer CLAUDE.md icon */
+.claude-code-claude-md-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 4px;
+  color: var(--claude-code-anthropic-orange, #d97757);
+  flex-shrink: 0;
+}
+
+.claude-code-claude-md-file-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Chat View Container */
 .claude-code-view {
   display: flex;
