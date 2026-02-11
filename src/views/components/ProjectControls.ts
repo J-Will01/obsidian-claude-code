@@ -21,6 +21,7 @@ export class ProjectControls {
   private onResetSession: () => void;
   private onOpenLogs: () => void;
   private onRewindLatest?: () => void;
+  private collapsed = true;
 
   constructor(options: ProjectControlsOptions) {
     this.containerEl = options.containerEl;
@@ -35,12 +36,43 @@ export class ProjectControls {
   render() {
     this.containerEl.empty();
     this.containerEl.addClass("claude-code-project-controls");
+    this.containerEl.toggleClass("is-collapsed", this.collapsed);
 
     const header = this.containerEl.createDiv({ cls: "claude-code-project-controls-header" });
+
+    const toggleBtn = header.createEl("button", {
+      cls: "claude-code-project-controls-toggle",
+      attr: { "aria-label": this.collapsed ? "Expand Project Controls" : "Collapse Project Controls" },
+    });
+    setIcon(toggleBtn.createSpan(), this.collapsed ? "chevron-right" : "chevron-down");
+    toggleBtn.addEventListener("click", async () => {
+      this.collapsed = !this.collapsed;
+      this.render();
+    });
+
     const title = header.createSpan({ text: "Project Controls" });
     title.addClass("claude-code-project-controls-title");
 
-    const modelRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const summary = header.createSpan({ cls: "claude-code-project-controls-summary" });
+    const conv = this.conversationManager.getCurrentConversation();
+    const pinnedCount = (conv?.pinnedContext ?? []).length;
+    const model = (this.plugin.settings.model || "sonnet").toLowerCase();
+    const modelLabel = model.charAt(0).toUpperCase() + model.slice(1);
+    const permission = this.plugin.settings.permissionMode || "default";
+    summary.setText(
+      `${modelLabel} · $${this.plugin.settings.maxBudgetPerSession} · ${this.plugin.settings.maxTurns} turns · ${permission}${pinnedCount > 0 ? ` · ${pinnedCount} pinned` : ""}`
+    );
+    summary.setAttribute("title", "Click to expand for full controls");
+    summary.addEventListener("click", () => {
+      this.collapsed = false;
+      this.render();
+    });
+
+    if (this.collapsed) return;
+
+    const contentEl = this.containerEl.createDiv({ cls: "claude-code-project-controls-content" });
+
+    const modelRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     modelRow.createSpan({ text: "Model" });
     const modelSelect = modelRow.createEl("select");
     modelSelect.add(new Option("Sonnet", "sonnet"));
@@ -52,7 +84,7 @@ export class ProjectControls {
       await this.plugin.saveSettings();
     });
 
-    const budgetRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const budgetRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     budgetRow.createSpan({ text: "Budget ($)" });
     const budgetInput = budgetRow.createEl("input", { attr: { type: "number", step: "0.5", min: "0" } });
     budgetInput.value = String(this.plugin.settings.maxBudgetPerSession);
@@ -64,7 +96,7 @@ export class ProjectControls {
       }
     });
 
-    const turnsRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const turnsRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     turnsRow.createSpan({ text: "Max turns" });
     const turnsInput = turnsRow.createEl("input", { attr: { type: "number", step: "1", min: "1" } });
     turnsInput.value = String(this.plugin.settings.maxTurns);
@@ -76,7 +108,7 @@ export class ProjectControls {
       }
     });
 
-    const permissionRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const permissionRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     permissionRow.createSpan({ text: "Permissions" });
     const permissionSelect = permissionRow.createEl("select");
     permissionSelect.add(new Option("Default", "default"));
@@ -93,12 +125,12 @@ export class ProjectControls {
       await this.plugin.saveSettings();
     });
 
-    const authRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const authRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     authRow.createSpan({ text: "Auth" });
     const authBadge = authRow.createSpan({ cls: "claude-code-project-controls-badge" });
     authBadge.setText(this.plugin.getAuthStatus().label);
 
-    const skillsRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const skillsRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     skillsRow.createSpan({ text: "Skills" });
     const skillsBadge = skillsRow.createSpan({ cls: "claude-code-project-controls-badge" });
     this.loadSkills().then((skills) => {
@@ -108,13 +140,13 @@ export class ProjectControls {
       }
     });
 
-    const mcpRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    const mcpRow = contentEl.createDiv({ cls: "claude-code-project-controls-row" });
     mcpRow.createSpan({ text: "MCP" });
     const mcpBadge = mcpRow.createSpan({ cls: "claude-code-project-controls-badge" });
     const activeServers = this.getActiveMcpServers();
     mcpBadge.setText(activeServers.length > 0 ? activeServers.join(", ") : "obsidian");
 
-    const buttons = this.containerEl.createDiv({ cls: "claude-code-project-controls-actions" });
+    const buttons = contentEl.createDiv({ cls: "claude-code-project-controls-actions" });
     this.addActionButton(buttons, "file-text", "Add active file", () => this.addActiveFile());
     this.addActionButton(buttons, "mouse-pointer-2", "Add selection", () => this.addSelection());
     this.addActionButton(buttons, "link", "Add backlinks", () => this.addBacklinks());
@@ -126,7 +158,7 @@ export class ProjectControls {
 
     const pinnedContext = this.conversationManager.getPinnedContext();
     if (pinnedContext.length > 0) {
-      const pinnedSection = this.containerEl.createDiv({ cls: "claude-code-project-controls-pinned" });
+      const pinnedSection = contentEl.createDiv({ cls: "claude-code-project-controls-pinned" });
       pinnedSection.createDiv({ text: "Pinned context" });
       const list = pinnedSection.createEl("ul");
       for (const ctx of pinnedContext) {

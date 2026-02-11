@@ -314,16 +314,6 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Show project controls panel")
-      .setDesc("Display model, budget, skills, and context controls above chat")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showProjectControlsPanel).onChange(async (value) => {
-          this.plugin.settings.showProjectControlsPanel = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
       .setName("Max pinned context characters")
       .setDesc("Limit for pinned context injected into the prompt")
       .addText((text) =>

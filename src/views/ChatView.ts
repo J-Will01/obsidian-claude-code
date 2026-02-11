@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Menu, ViewStateResult } from "obsidian";
+import { ItemView, WorkspaceLeaf, setIcon, Menu, ViewStateResult, Notice, MarkdownView } from "obsidian";
 import { CHAT_VIEW_TYPE, ChatMessage, ToolCall, Conversation, ErrorType } from "../types";
 import type ClaudeCodePlugin from "../main";
 import { ChatInput } from "./ChatInput";
@@ -7,7 +7,6 @@ import { AgentController, classifyError } from "../agent/AgentController";
 import { ConversationManager } from "../agent/ConversationManager";
 import { ConversationHistoryModal } from "./ConversationHistoryModal";
 import { logger } from "../utils/Logger";
-import { ProjectControls } from "./components/ProjectControls";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
 import { revertFromBackup } from "../utils/DiffEngine";
 
@@ -19,7 +18,6 @@ export class ChatView extends ItemView {
   private inputContainerEl!: HTMLElement;
   private messageList!: MessageList;
   private chatInput!: ChatInput;
-  private projectControls: ProjectControls | null = null;
   private messages: ChatMessage[] = [];
   private isStreaming = false;
   private agentController: AgentController;
@@ -30,6 +28,7 @@ export class ChatView extends ItemView {
   private activeStreamConversationId: string | null = null;  // Track which conversation owns the active stream.
   private lastUserMessage: string | null = null;  // Store last message for retry functionality.
   private telemetryIntervalId: number | null = null;
+  private isRenamingConversationTitle = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -183,7 +182,15 @@ export class ChatView extends ItemView {
     titleEl.setText(conv?.title || "New Conversation");
     const chevron = convPicker.createSpan({ cls: "claude-code-conv-chevron" });
     setIcon(chevron, "chevron-down");
-    convPicker.addEventListener("click", (e) => this.showConversationPicker(e));
+    convPicker.addEventListener("click", (e) => {
+      if (this.isRenamingConversationTitle) return;
+      this.showConversationPicker(e);
+    });
+    convPicker.addEventListener("contextmenu", (e) => this.showConversationContextMenu(e));
+    titleEl.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      void this.beginConversationTitleEdit();
+    });
 
     // Actions section.
     const actionsEl = this.headerEl.createDiv({ cls: "claude-code-header-actions" });
@@ -193,16 +200,6 @@ export class ChatView extends ItemView {
     setIcon(newButton, "plus");
     newButton.addEventListener("click", () => this.startNewConversation());
 
-    // New window button.
-    const newWindowButton = actionsEl.createEl("button", { attr: { "aria-label": "New Chat Window" } });
-    setIcon(newWindowButton, "plus-square");
-    newWindowButton.addEventListener("click", (e) => this.showNewWindowMenu(e));
-
-    // History button.
-    const historyButton = actionsEl.createEl("button", { attr: { "aria-label": "History" } });
-    setIcon(historyButton, "history");
-    historyButton.addEventListener("click", () => this.showHistory());
-
     // Checkpoint/rewind button.
     const checkpointButton = actionsEl.createEl("button", {
       attr: { "aria-label": "Checkpoints and Rewind" },
@@ -210,48 +207,13 @@ export class ChatView extends ItemView {
     setIcon(checkpointButton, "rotate-ccw");
     checkpointButton.addEventListener("click", (e) => this.showCheckpointMenu(e as MouseEvent));
 
-    // Settings button.
-    const settingsButton = actionsEl.createEl("button", { attr: { "aria-label": "Settings" } });
-    setIcon(settingsButton, "settings");
-    settingsButton.addEventListener("click", () => {
-      (this.app as any).setting.open();
-      (this.app as any).setting.openTabById("obsidian-claude-code");
-    });
-
-    // Collapse sidebar button.
-    const collapseButton = actionsEl.createEl("button", { attr: { "aria-label": "Collapse Sidebar" } });
-    setIcon(collapseButton, "panel-right-close");
-    collapseButton.addEventListener("click", () => this.collapseSidebar());
-
-    // Close pane button (X) - always show so user can close stuck panes.
-    const closeButton = actionsEl.createEl("button", {
-      attr: { "aria-label": "Close Pane" },
-      cls: "claude-code-close-btn",
-    });
-    setIcon(closeButton, "x");
-    closeButton.addEventListener("click", () => this.leaf.detach());
+    // Compact overflow menu for secondary actions.
+    const moreButton = actionsEl.createEl("button", { attr: { "aria-label": "More Actions" } });
+    setIcon(moreButton, "more-horizontal");
+    moreButton.addEventListener("click", (e) => this.showHeaderActionsMenu(e));
   }
 
-  private collapseSidebar() {
-    const rightSplit = this.app.workspace.rightSplit;
-    if (rightSplit && !rightSplit.collapsed) {
-      rightSplit.collapse();
-    }
-  }
-
-  // Check if a leaf is contained within a workspace split.
-  private isLeafInSplit(leaf: WorkspaceLeaf, split: any): boolean {
-    if (!split) return false;
-    let parent = leaf.parent;
-    while (parent) {
-      if (parent === split) return true;
-      parent = (parent as any).parent;
-    }
-    return false;
-  }
-
-  private showNewWindowMenu(e: MouseEvent) {
-    const menu = new Menu();
+  private addNewWindowMenuItems(menu: Menu) {
     const currentCount = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE).length;
     const maxWindows = 5;
 
@@ -279,8 +241,118 @@ export class ChatView extends ItemView {
           .onClick(() => this.plugin.createNewChatView("split-down"));
       });
     }
+  }
 
+  private showHeaderActionsMenu(e: MouseEvent) {
+    const menu = new Menu();
+    this.addNewWindowMenuItems(menu);
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle("View all history")
+        .setIcon("history")
+        .onClick(() => {
+          void this.showHistory();
+        });
+    });
+    menu.addItem((item) => {
+      item.setTitle("Rename conversation")
+        .setIcon("pencil")
+        .onClick(() => {
+          void this.beginConversationTitleEdit();
+        });
+    });
+    menu.addItem((item) => {
+      item.setTitle("Plugin settings")
+        .setIcon("settings")
+        .onClick(() => this.openPluginSettings());
+    });
     menu.showAtMouseEvent(e);
+  }
+
+  private openPluginSettings() {
+    (this.app as any).setting.open();
+    (this.app as any).setting.openTabById("obsidian-claude-code");
+  }
+
+  private showConversationContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    const menu = new Menu();
+    menu.addItem((item) => {
+      item.setTitle("Rename conversation")
+        .setIcon("pencil")
+        .onClick(() => {
+          void this.beginConversationTitleEdit();
+        });
+    });
+    menu.addItem((item) => {
+      item.setTitle("View all history")
+        .setIcon("history")
+        .onClick(() => {
+          void this.showHistory();
+        });
+    });
+    menu.showAtMouseEvent(e);
+  }
+
+  private async beginConversationTitleEdit() {
+    if (this.isRenamingConversationTitle) return;
+    const conv = this.conversationManager.getCurrentConversation();
+    if (!conv) return;
+
+    const convPicker = this.headerEl.querySelector(".claude-code-conv-picker") as HTMLElement | null;
+    const titleEl = this.headerEl.querySelector(".claude-code-conv-title") as HTMLElement | null;
+    if (!convPicker || !titleEl) return;
+
+    this.isRenamingConversationTitle = true;
+    const originalTitle = conv.title || "New Conversation";
+    const inputEl = convPicker.createEl("input", {
+      cls: "claude-code-conv-title-input",
+      attr: { type: "text", "aria-label": "Conversation title" },
+    });
+    inputEl.value = originalTitle;
+    titleEl.replaceWith(inputEl);
+
+    const finish = async (save: boolean) => {
+      if (!this.isRenamingConversationTitle) return;
+      this.isRenamingConversationTitle = false;
+
+      let nextTitle = originalTitle;
+      if (save) {
+        const trimmed = inputEl.value.trim();
+        if (trimmed.length > 0) {
+          nextTitle = trimmed;
+          if (trimmed !== originalTitle && conv.id) {
+            await this.conversationManager.renameConversation(conv.id, trimmed);
+            (this.leaf as any).updateHeader?.();
+          }
+        }
+      }
+
+      const replacement = convPicker.createSpan({ cls: "claude-code-conv-title", text: nextTitle });
+      inputEl.replaceWith(replacement);
+      replacement.addEventListener("dblclick", (event) => {
+        event.stopPropagation();
+        void this.beginConversationTitleEdit();
+      });
+      this.updateConversationDisplay();
+    };
+
+    inputEl.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        void finish(false);
+      }
+    });
+    inputEl.addEventListener("click", (event) => event.stopPropagation());
+    inputEl.addEventListener("blur", () => {
+      void finish(true);
+    });
+    inputEl.focus();
+    inputEl.select();
   }
 
   private async showConversationPicker(e: MouseEvent) {
@@ -308,6 +380,14 @@ export class ChatView extends ItemView {
       item.setTitle("New conversation")
         .setIcon("plus")
         .onClick(() => this.startNewConversation());
+    });
+
+    menu.addItem((item) => {
+      item.setTitle("Rename current conversation")
+        .setIcon("pencil")
+        .onClick(() => {
+          void this.beginConversationTitleEdit();
+        });
     });
 
     menu.addItem((item) => {
@@ -374,7 +454,6 @@ export class ChatView extends ItemView {
   }
 
   private refreshProjectControls() {
-    this.projectControls?.render();
     this.updateTelemetryBars();
   }
 
@@ -385,7 +464,6 @@ export class ChatView extends ItemView {
     const usageRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
     const usageLabel = usageRow.createDiv({ cls: "claude-code-telemetry-label" });
     usageLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "5h Usage" });
-    usageLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "" });
     const usageTrack = usageRow.createDiv({ cls: "claude-code-telemetry-track" });
     usageTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-usage-fill" });
     usageRow.createDiv({ cls: "claude-code-telemetry-value claude-code-usage-value" });
@@ -394,26 +472,21 @@ export class ChatView extends ItemView {
     weeklyRow.style.display = "none";
     const weeklyLabel = weeklyRow.createDiv({ cls: "claude-code-telemetry-label" });
     weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "7d Usage" });
-    weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "" });
     const weeklyTrack = weeklyRow.createDiv({ cls: "claude-code-telemetry-track" });
     weeklyTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-weekly-fill" });
     weeklyRow.createDiv({ cls: "claude-code-telemetry-value claude-code-weekly-value" });
 
     const contextRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
     const contextLabel = contextRow.createDiv({ cls: "claude-code-telemetry-label" });
-    contextLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "Context" });
-    contextLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "(est.)" });
+    contextLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "Context (est.)" });
     const contextTrack = contextRow.createDiv({ cls: "claude-code-telemetry-track" });
     contextTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-context-fill" });
     contextRow.createDiv({ cls: "claude-code-telemetry-value claude-code-context-value" });
 
     const metaRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-meta" });
-    metaRow.createDiv({ cls: "claude-code-telemetry-last-updated", text: "Last updated: --" });
-    const refreshBtn = metaRow.createEl("button", { cls: "claude-code-telemetry-refresh", attr: { "aria-label": "Refresh usage" } });
-    setIcon(refreshBtn, "refresh-cw");
-    refreshBtn.addEventListener("click", () => {
-      void this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true }).then(() => this.updateTelemetryBars());
-    });
+    const metaInfo = metaRow.createDiv({ cls: "claude-code-telemetry-meta-info" });
+    metaInfo.createDiv({ cls: "claude-code-telemetry-reset", text: "5h reset: --" });
+    metaInfo.createDiv({ cls: "claude-code-telemetry-weekly-reset", text: "7d reset: --" });
 
     this.updateTelemetryBars();
     if (this.telemetryIntervalId !== null) {
@@ -437,15 +510,14 @@ export class ChatView extends ItemView {
 
     const usageFill = this.telemetryEl.querySelector(".claude-code-usage-fill") as HTMLElement | null;
     const usageValue = this.telemetryEl.querySelector(".claude-code-usage-value") as HTMLElement | null;
-    const usageSubtitle = this.telemetryEl.querySelector(".claude-code-telemetry-row .claude-code-telemetry-label-subtitle") as HTMLElement | null;
     const weeklyRow = this.telemetryEl.querySelector(".claude-code-weekly-row") as HTMLElement | null;
     const weeklyFill = this.telemetryEl.querySelector(".claude-code-weekly-fill") as HTMLElement | null;
     const weeklyValue = this.telemetryEl.querySelector(".claude-code-weekly-value") as HTMLElement | null;
-    const weeklySubtitle = weeklyRow?.querySelector(".claude-code-telemetry-label-subtitle") as HTMLElement | null;
     const contextFill = this.telemetryEl.querySelector(".claude-code-context-fill") as HTMLElement | null;
     const contextValue = this.telemetryEl.querySelector(".claude-code-context-value") as HTMLElement | null;
-    const lastUpdatedEl = this.telemetryEl.querySelector(".claude-code-telemetry-last-updated") as HTMLElement | null;
-    if (!usageFill || !usageValue || !weeklyRow || !weeklyFill || !weeklyValue || !contextFill || !contextValue || !lastUpdatedEl) return;
+    const resetEl = this.telemetryEl.querySelector(".claude-code-telemetry-reset") as HTMLElement | null;
+    const weeklyResetEl = this.telemetryEl.querySelector(".claude-code-telemetry-weekly-reset") as HTMLElement | null;
+    if (!usageFill || !usageValue || !weeklyRow || !weeklyFill || !weeklyValue || !contextFill || !contextValue || !resetEl || !weeklyResetEl) return;
 
     const source = this.plugin.settings.usageTelemetrySource || "auto";
     if (source !== "budget") {
@@ -459,44 +531,37 @@ export class ChatView extends ItemView {
     const snapshot = this.plugin.getClaudeAiPlanUsageSnapshot();
     const usePlanUsage = (source === "claudeAi" || source === "auto") && !!snapshot;
 
-    const formatResetTime = (iso?: string) => {
-      if (!iso) return null;
-      const dt = new Date(iso);
-      if (Number.isNaN(dt.getTime())) return null;
-      return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    };
-
-    const formatResetsIn = (iso?: string) => {
+    const formatResetCountdown = (iso?: string) => {
       if (!iso) return null;
       const dt = new Date(iso);
       if (Number.isNaN(dt.getTime())) return null;
       const deltaMs = dt.getTime() - Date.now();
-      if (deltaMs <= 0) return "Resets soon";
+      if (deltaMs <= 0) return "soon";
       const mins = Math.max(0, Math.round(deltaMs / 60000));
-      if (mins < 60) return `Resets in ${mins} min`;
+      if (mins < 60) return `${mins}m`;
       const hrs = Math.floor(mins / 60);
       const rem = mins % 60;
-      return rem === 0 ? `Resets in ${hrs} hr` : `Resets in ${hrs} hr ${rem} min`;
+      return rem === 0 ? `${hrs}h` : `${hrs}h ${rem}m`;
     };
 
-    const formatLastUpdated = (ms?: number) => {
-      if (!ms || !Number.isFinite(ms)) return "--";
-      const delta = Date.now() - ms;
-      if (delta < 5000) return "just now";
-      const secs = Math.round(delta / 1000);
-      if (secs < 60) return `${secs}s ago`;
-      const mins = Math.round(secs / 60);
-      if (mins < 60) return `${mins}m ago`;
-      const hrs = Math.round(mins / 60);
-      return `${hrs}h ago`;
+    const formatResetAt = (iso?: string) => {
+      if (!iso) return null;
+      const dt = new Date(iso);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     };
 
     if (usePlanUsage && snapshot) {
       const usagePercent = Math.max(0, Math.min(100, snapshot.fiveHourUtilizationPercent));
       usageFill.style.width = `${usagePercent}%`;
-      usageValue.setText(`${usagePercent.toFixed(0)}% used`);
-      const resetsIn = formatResetsIn(snapshot.fiveHourResetsAt);
-      if (usageSubtitle) usageSubtitle.setText(resetsIn ?? "");
+      usageValue.setText(`${usagePercent.toFixed(0)} %`);
+      usageValue.removeAttribute("title");
+      const resetCountdown = formatResetCountdown(snapshot.fiveHourResetsAt);
+      resetEl.setText(
+        !resetCountdown ? "5h reset: --" : resetCountdown === "soon" ? "5h reset: soon" : `5h reset: in ${resetCountdown}`
+      );
+      const weeklyResetAt = formatResetAt(snapshot.sevenDayResetsAt);
+      weeklyResetEl.setText(weeklyResetAt ? `7d reset: ${weeklyResetAt}` : "7d reset: --");
 
       const threshold = Math.max(0, Math.min(100, this.plugin.settings.weeklyUsageAlertThresholdPercent ?? 80));
       const weeklyPercent = snapshot.sevenDayUtilizationPercent;
@@ -505,29 +570,26 @@ export class ChatView extends ItemView {
       if (showWeekly && typeof weeklyPercent === "number") {
         const clamped = Math.max(0, Math.min(100, weeklyPercent));
         weeklyFill.style.width = `${clamped}%`;
-        weeklyValue.setText(`${clamped.toFixed(0)}% used`);
-        const weeklyReset = formatResetTime(snapshot.sevenDayResetsAt);
-        if (weeklySubtitle) weeklySubtitle.setText(weeklyReset ? `Resets ${weeklyReset}` : "");
+        weeklyValue.setText(`${clamped.toFixed(0)} %`);
       }
-      lastUpdatedEl.setText(`Last updated: ${formatLastUpdated(snapshot.fetchedAt)}`);
     } else {
       weeklyRow.style.display = "none";
       if (source === "claudeAi") {
         usageFill.style.width = `0%`;
-        usageValue.setText("Unavailable");
+        usageValue.setText("—");
+        usageValue.removeAttribute("title");
         const err = this.plugin.getClaudeAiPlanUsageError();
-        if (usageSubtitle) usageSubtitle.setText(err ? "Check /status for error" : "");
-        lastUpdatedEl.setText("Last updated: --");
+        resetEl.setText(err ? "5h reset: unavailable" : "5h reset: --");
+        weeklyResetEl.setText(err ? "7d reset: unavailable" : "7d reset: --");
       } else {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
         const usagePercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
         usageFill.style.width = `${usagePercent}%`;
-        usageValue.setText(
-          `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)} (${usagePercent.toFixed(0)}%)`
-        );
-        if (usageSubtitle) usageSubtitle.setText("");
-        lastUpdatedEl.setText("Last updated: --");
+        usageValue.setText(`${usagePercent.toFixed(0)} %`);
+        usageValue.setAttribute("title", `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
+        resetEl.setText("5h reset: --");
+        weeklyResetEl.setText("7d reset: --");
       }
     }
 
@@ -537,29 +599,12 @@ export class ChatView extends ItemView {
     const usedTokens = Math.max(0, conv?.metadata?.totalTokens ?? 0, conv?.metadata?.inputTokens ?? 0);
     const contextPercent = Math.min(100, (usedTokens / contextWindow) * 100);
     contextFill.style.width = `${contextPercent}%`;
-    contextValue.setText(
-      `${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${contextPercent.toFixed(0)}%)`
-    );
+    contextValue.setText(`${contextPercent.toFixed(0)} %`);
+    contextValue.setAttribute("title", `${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`);
   }
 
   private renderMessagesArea() {
     const bodyEl = this.contentEl.createDiv({ cls: "claude-code-body" });
-    if (this.plugin.settings.showProjectControlsPanel) {
-      const controlsEl = bodyEl.createDiv({ cls: "claude-code-project-controls-container" });
-      this.projectControls = new ProjectControls({
-        containerEl: controlsEl,
-        app: this.app,
-        plugin: this.plugin,
-        conversationManager: this.conversationManager,
-        onResetSession: () => this.resetSession(),
-        onOpenLogs: () => this.openLogs(),
-        onRewindLatest: () => {
-          void this.handleRewindCommand();
-        },
-      });
-      this.projectControls.render();
-    }
-
     this.messagesContainerEl = bodyEl.createDiv({ cls: "claude-code-messages" });
     this.messageList = new MessageList(this.messagesContainerEl, this.plugin);
 
@@ -612,6 +657,30 @@ export class ChatView extends ItemView {
         break;
       case "usage":
         await this.showUsageMessage();
+        break;
+      case "file":
+        await this.handleFileContextCommand(args);
+        break;
+      case "rename":
+        await this.handleRenameConversationCommand(args);
+        break;
+      case "pin-file":
+        await this.handlePinFileCommand();
+        break;
+      case "pin-selection":
+        await this.handlePinSelectionCommand();
+        break;
+      case "pin-backlinks":
+        await this.handlePinBacklinksCommand(args);
+        break;
+      case "pins":
+        await this.showPinnedContextMessage();
+        break;
+      case "clear-pins":
+        await this.clearPinnedContextCommand();
+        break;
+      case "logs":
+        this.openLogs();
         break;
       case "model":
         await this.handleModelCommand(args);
@@ -711,6 +780,155 @@ export class ChatView extends ItemView {
       `- Total cost: \`$${totalCost.toFixed(4)}\``,
     ];
     await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+  }
+
+  private async handleFileContextCommand(args: string[]) {
+    if (args.length === 0) {
+      const added = this.addCurrentFileContext();
+      if (!added) {
+        new Notice("No active file to add.");
+        return;
+      }
+      await this.appendLocalAssistantMessage("Context", "Added active file as `@` context.");
+      return;
+    }
+
+    const added: string[] = [];
+    const missing: string[] = [];
+    for (const rawPath of args) {
+      const file = this.app.vault.getFileByPath(rawPath);
+      if (!file) {
+        missing.push(rawPath);
+        continue;
+      }
+      this.chatInput.addFileContext(file.path);
+      added.push(file.path);
+    }
+
+    const lines = [
+      added.length > 0 ? `- Added: \`${added.join(", ")}\`` : "",
+      missing.length > 0 ? `- Not found: \`${missing.join(", ")}\`` : "",
+    ].filter(Boolean);
+    await this.appendLocalAssistantMessage("Context", lines.join("\n") || "No files added.");
+  }
+
+  private async handleRenameConversationCommand(args: string[]) {
+    const conv = this.conversationManager.getCurrentConversation();
+    if (!conv) return;
+
+    const requested = args.join(" ").trim();
+    if (!requested) {
+      await this.beginConversationTitleEdit();
+      return;
+    }
+
+    const renamed = await this.conversationManager.renameConversation(conv.id, requested);
+    if (!renamed) {
+      new Notice("Conversation title cannot be empty.");
+      return;
+    }
+    (this.leaf as any).updateHeader?.();
+    this.updateConversationDisplay();
+    await this.appendLocalAssistantMessage("Conversation", `Renamed conversation to \`${requested}\`.`);
+  }
+
+  private async handlePinFileCommand() {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) {
+      new Notice("No active file to pin.");
+      return;
+    }
+    const content = await this.app.vault.read(file);
+    await this.conversationManager.addPinnedContext({
+      type: "file",
+      path: file.path,
+      content,
+      label: `File: ${file.path}`,
+    });
+    await this.appendLocalAssistantMessage("Pinned Context", `Pinned active file: \`${file.path}\`.`);
+  }
+
+  private async handlePinSelectionCommand() {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const selection = view?.editor?.getSelection();
+    if (!selection) {
+      new Notice("No selection to pin.");
+      return;
+    }
+    await this.conversationManager.addPinnedContext({
+      type: "selection",
+      content: selection,
+      label: "Selection",
+    });
+    await this.appendLocalAssistantMessage("Pinned Context", "Pinned current editor selection.");
+  }
+
+  private async handlePinBacklinksCommand(args: string[]) {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) {
+      new Notice("No active file to gather backlinks from.");
+      return;
+    }
+
+    const requested = parseInt(args[0] || "3", 10);
+    const limit = Number.isNaN(requested) ? 3 : Math.max(1, Math.min(10, requested));
+    const backlinks = (this.app.metadataCache as any).getBacklinksForFile?.(file);
+    const linkedFiles: string[] = backlinks
+      ? Array.from(backlinks.data?.keys?.() ?? [])
+        .map((entry: any) => (typeof entry === "string" ? entry : entry?.path || ""))
+        .filter(Boolean)
+      : [];
+    if (linkedFiles.length === 0) {
+      new Notice("No backlinks found.");
+      return;
+    }
+
+    const pinned: string[] = [];
+    for (const path of linkedFiles.slice(0, limit)) {
+      const targetFile = this.app.vault.getFileByPath(path);
+      if (!targetFile) continue;
+      const content = await this.app.vault.read(targetFile);
+      await this.conversationManager.addPinnedContext({
+        type: "file",
+        path: targetFile.path,
+        content,
+        label: `Backlink: ${targetFile.path}`,
+      });
+      pinned.push(targetFile.path);
+    }
+
+    if (pinned.length === 0) {
+      new Notice("No backlink files could be pinned.");
+      return;
+    }
+    await this.appendLocalAssistantMessage(
+      "Pinned Context",
+      `Pinned ${pinned.length} backlink file(s): \`${pinned.join(", ")}\`.`
+    );
+  }
+
+  private async showPinnedContextMessage() {
+    const pinned = this.conversationManager.getPinnedContext();
+    if (pinned.length === 0) {
+      await this.appendLocalAssistantMessage("Pinned Context", "No pinned context.");
+      return;
+    }
+
+    const preview = pinned.slice(0, 10).map((ctx) => `- ${ctx.label}`);
+    if (pinned.length > 10) {
+      preview.push(`- ...and ${pinned.length - 10} more`);
+    }
+    await this.appendLocalAssistantMessage("Pinned Context", preview.join("\n"));
+  }
+
+  private async clearPinnedContextCommand() {
+    const pinned = this.conversationManager.getPinnedContext();
+    if (pinned.length === 0) {
+      await this.appendLocalAssistantMessage("Pinned Context", "No pinned context to clear.");
+      return;
+    }
+    await this.conversationManager.clearPinnedContext();
+    await this.appendLocalAssistantMessage("Pinned Context", `Cleared ${pinned.length} pinned context item(s).`);
   }
 
   private async handleModelCommand(args: string[]) {
@@ -1514,11 +1732,13 @@ export class ChatView extends ItemView {
     return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   }
 
-  addCurrentFileContext() {
+  addCurrentFileContext(): boolean {
     const activeFile = this.app.workspace.getActiveFile();
     if (activeFile) {
       this.chatInput.addFileContext(activeFile.path);
+      return true;
     }
+    return false;
   }
 
   scrollToBottom() {
