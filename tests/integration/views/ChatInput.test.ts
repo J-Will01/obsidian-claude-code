@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { createContainer, keydown, pressEnter, pressEscape, type } from "../../helpers/dom";
+import { click, createContainer, keydown, pressEnter, pressEscape, type } from "../../helpers/dom";
 import { createMockPlugin } from "../../helpers/factories";
 import { ChatInput } from "../../../src/views/ChatInput";
 import { getSlashCommands } from "../../../src/utils/slashCommands";
@@ -63,6 +63,57 @@ describe("ChatInput", () => {
       container.appendChild(textarea);
 
       expect(textarea.placeholder).toBe("Ask about your vault...");
+    });
+
+    it("should fill the textarea when a hint action is clicked", () => {
+      const plugin = createMockPlugin();
+      const input = new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand: vi.fn(),
+        plugin: plugin as any,
+      });
+
+      input.setHints([
+        {
+          id: "usage-high",
+          text: "Check usage before your next run.",
+          command: "/usage",
+        },
+      ]);
+
+      const hintAction = container.querySelector(".claude-code-input-hint-action") as HTMLButtonElement;
+      click(hintAction);
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      expect(textarea.value).toBe("/usage");
+    });
+
+    it("should call the dismiss callback when closing a hint", () => {
+      const plugin = createMockPlugin();
+      const onDismiss = vi.fn();
+      const input = new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand: vi.fn(),
+        plugin: plugin as any,
+      });
+
+      input.setHints([
+        {
+          id: "mcp-approval",
+          text: "Some MCP servers need approval.",
+          command: "/mcp",
+          onDismiss,
+        },
+      ]);
+
+      const dismissButton = container.querySelector(".claude-code-input-hint-dismiss") as HTMLButtonElement;
+      click(dismissButton);
+
+      expect(onDismiss).toHaveBeenCalledWith("mcp-approval");
     });
   });
 

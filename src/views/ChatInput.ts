@@ -20,12 +20,22 @@ interface ChatInputOptions {
   plugin: ClaudeCodePlugin;
 }
 
+export interface ChatInputHint {
+  id: string;
+  text: string;
+  command: string;
+  severity?: "info" | "warning";
+  onDismiss?: (hintId: string) => void;
+}
+
 export class ChatInput {
   private containerEl: HTMLElement;
   private textareaEl!: HTMLTextAreaElement;
   private options: ChatInputOptions;
   private fileContexts: string[] = [];
   private autocomplete: AutocompletePopup;
+  private hints: ChatInputHint[] = [];
+  private hintsEl: HTMLElement | null = null;
 
   constructor(parentEl: HTMLElement, options: ChatInputOptions) {
     this.containerEl = parentEl;
@@ -152,6 +162,24 @@ export class ChatInput {
     this.recordSlashCommandEvent(command, "selected", "autocomplete", 0);
     this.textareaEl.value = getSlashCommandInputText(command);
     this.textareaEl.selectionStart = this.textareaEl.selectionEnd = this.textareaEl.value.length;
+    this.textareaEl.focus();
+  }
+
+  private applyHintCommand(commandText: string) {
+    const trimmed = commandText.trim();
+    if (!trimmed) return;
+
+    const [commandToken] = trimmed.split(/\s+/);
+    const knownCommand = getSlashCommandByValue(commandToken.toLowerCase());
+    const value =
+      knownCommand && trimmed === commandToken
+        ? getSlashCommandInputText(knownCommand)
+        : trimmed;
+
+    this.textareaEl.value = value;
+    this.textareaEl.selectionStart = this.textareaEl.selectionEnd = this.textareaEl.value.length;
+    this.autoResize();
+    this.checkForAutocomplete();
     this.textareaEl.focus();
   }
 
@@ -302,6 +330,49 @@ export class ChatInput {
   setValue(value: string) {
     this.textareaEl.value = value;
     this.autoResize();
+  }
+
+  setHints(hints: ChatInputHint[]) {
+    this.hints = [...hints];
+    this.renderHints();
+  }
+
+  private renderHints() {
+    this.hintsEl?.remove();
+    this.hintsEl = null;
+
+    if (this.hints.length === 0) {
+      return;
+    }
+
+    this.hintsEl = this.containerEl.createDiv({ cls: "claude-code-input-hints" });
+
+    for (const hint of this.hints) {
+      const chipEl = this.hintsEl.createDiv({
+        cls: `claude-code-input-hint-chip${hint.severity === "warning" ? " is-warning" : ""}`,
+      });
+
+      const actionEl = chipEl.createEl("button", {
+        cls: "claude-code-input-hint-action",
+        text: hint.text,
+        attr: { type: "button" },
+      });
+      actionEl.addEventListener("click", () => this.applyHintCommand(hint.command));
+
+      const dismissEl = chipEl.createEl("button", {
+        cls: "claude-code-input-hint-dismiss",
+        attr: {
+          type: "button",
+          "aria-label": `Dismiss hint: ${hint.text}`,
+        },
+      });
+      setIcon(dismissEl, "x");
+      dismissEl.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        hint.onDismiss?.(hint.id);
+      });
+    }
   }
 
   private recordSlashCommandEvent(

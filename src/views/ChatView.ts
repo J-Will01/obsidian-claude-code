@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon, Menu, ViewStateResult, Notice, MarkdownView } from "obsidian";
 import { CHAT_VIEW_TYPE, ChatMessage, ToolCall, Conversation, ErrorType } from "../types";
 import type ClaudeCodePlugin from "../main";
-import { ChatInput } from "./ChatInput";
+import { ChatInput, type ChatInputHint } from "./ChatInput";
 import { MessageList } from "./MessageList";
 import { AgentController, classifyError } from "../agent/AgentController";
 import { ConversationManager } from "../agent/ConversationManager";
@@ -17,6 +17,7 @@ import {
   getSlashCommands,
   normalizeSlashCommandName,
 } from "../utils/slashCommands";
+import { buildContextualHints } from "../utils/hints";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -37,6 +38,10 @@ export class ChatView extends ItemView {
   private lastUserMessage: string | null = null;  // Store last message for retry functionality.
   private telemetryIntervalId: number | null = null;
   private isRenamingConversationTitle = false;
+  private dismissedHintIds = new Set<string>();
+  private hintLastShownAt = new Map<string, number>();
+  private visibleHintIds = new Set<string>();
+  private latestHintMetrics: { contextPercentUsed: number; usagePercentUsed: number | null } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -530,6 +535,7 @@ export class ChatView extends ItemView {
 
     const snapshot = this.plugin.getClaudeAiPlanUsageSnapshot();
     const usePlanUsage = (source === "claudeAi" || source === "auto") && !!snapshot;
+    let usagePercentForHints: number | null = null;
 
     const formatResetCountdown = (iso?: string) => {
       if (!iso) return null;
@@ -553,6 +559,7 @@ export class ChatView extends ItemView {
 
     if (usePlanUsage && snapshot) {
       const usagePercent = Math.max(0, Math.min(100, snapshot.fiveHourUtilizationPercent));
+      usagePercentForHints = usagePercent;
       usageFill.style.width = `${usagePercent}%`;
       usageValue.setText(`${usagePercent.toFixed(0)} %`);
       usageValue.removeAttribute("title");
@@ -577,6 +584,7 @@ export class ChatView extends ItemView {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
         const fallbackPercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+        usagePercentForHints = fallbackPercent;
         usageFill.style.width = `${fallbackPercent}%`;
         usageValue.setText(`${fallbackPercent.toFixed(0)} %`);
         usageValue.setAttribute("title", `Local fallback: $${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
@@ -588,6 +596,7 @@ export class ChatView extends ItemView {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
         const usagePercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+        usagePercentForHints = usagePercent;
         usageFill.style.width = `${usagePercent}%`;
         usageValue.setText(`${usagePercent.toFixed(0)} %`);
         usageValue.setAttribute("title", `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
@@ -615,6 +624,117 @@ export class ChatView extends ItemView {
       "title",
       `${contextEstimate.usedTokens.toLocaleString()} / ${contextEstimate.contextWindow.toLocaleString()} tokens (${sourceLabel})`
     );
+
+    this.latestHintMetrics = {
+      contextPercentUsed: contextEstimate.percentUsed,
+      usagePercentUsed: usagePercentForHints,
+    };
+    this.updateContextualInputHints(
+      contextEstimate.percentUsed,
+      usagePercentForHints
+    );
+  }
+
+  private updateContextualInputHints(contextPercentUsed: number, usagePercentUsed: number | null) {
+    if (!this.chatInput) return;
+
+    const now = Date.now();
+    const approvedMcpServers = new Set(this.plugin.settings.approvedMcpServers);
+    const hasPendingMcpApproval = this.plugin.settings.additionalMcpServers.some(
+      (server) => server.enabled && !approvedMcpServers.has(server.name)
+    );
+
+    const candidates = buildContextualHints({
+      contextPercentUsed,
+      usagePercentUsed,
+      permissionPromptSignals: this.getPermissionPromptSignals(now),
+      hasPendingMcpApproval,
+      permissionMode: this.plugin.settings.permissionMode,
+    });
+
+    const hintsToRender: ChatInputHint[] = [];
+    for (const hint of candidates) {
+      if (this.dismissedHintIds.has(hint.id)) {
+        continue;
+      }
+
+      const isVisible = this.visibleHintIds.has(hint.id);
+      const lastShownAt = this.hintLastShownAt.get(hint.id);
+      if (!isVisible && lastShownAt && (now - lastShownAt) < hint.cooldownMs) {
+        continue;
+      }
+
+      if (!isVisible) {
+        this.hintLastShownAt.set(hint.id, now);
+      }
+
+      hintsToRender.push({
+        id: hint.id,
+        text: hint.text,
+        command: hint.command,
+        severity: hint.severity,
+        onDismiss: (hintId: string) => this.handleHintDismiss(hintId),
+      });
+
+      if (hintsToRender.length >= 3) {
+        break;
+      }
+    }
+
+    this.visibleHintIds = new Set(hintsToRender.map((hint) => hint.id));
+    this.chatInput.setHints(hintsToRender);
+  }
+
+  private handleHintDismiss(hintId: string) {
+    this.dismissedHintIds.add(hintId);
+    this.visibleHintIds.delete(hintId);
+
+    if (!this.latestHintMetrics) {
+      this.chatInput.setHints([]);
+      return;
+    }
+
+    this.updateContextualInputHints(
+      this.latestHintMetrics.contextPercentUsed,
+      this.latestHintMetrics.usagePercentUsed
+    );
+  }
+
+  private getPermissionPromptSignals(now: number): number {
+    const windowMs = 20 * 60 * 1000;
+    const cutoff = now - windowMs;
+    const permissionRegex = /\bpermission\b/i;
+    const frictionRegex = /\b(denied|approve|approval|allow)\b/i;
+
+    let signals = 0;
+    for (const message of this.messages) {
+      if (message.timestamp < cutoff) {
+        continue;
+      }
+
+      if (permissionRegex.test(message.content) && frictionRegex.test(message.content)) {
+        signals += 1;
+      }
+
+      for (const toolCall of message.toolCalls ?? []) {
+        const content = `${toolCall.error ?? ""}\n${toolCall.output ?? ""}\n${toolCall.stderr ?? ""}`;
+        if (permissionRegex.test(content) && frictionRegex.test(content)) {
+          signals += 1;
+        }
+      }
+    }
+
+    const slashSignals = (this.plugin.settings.slashCommandEvents || []).reduce((count, event) => {
+      if (event.timestamp < cutoff) {
+        return count;
+      }
+      if (event.commandId === "permissions" && event.action === "executedLocal") {
+        return count + 1;
+      }
+      return count;
+    }, 0);
+
+    return signals + slashSignals;
   }
 
   private renderMessagesArea() {
