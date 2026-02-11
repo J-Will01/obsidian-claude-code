@@ -17,6 +17,7 @@ import { requireClaudeExecutable } from "../utils/claudeExecutable";
 import { StreamingAccumulator } from "../utils/StreamingAccumulator";
 import { applyNormalizedToolResult, normalizeToolResult } from "../utils/ToolResultNormalizer";
 import { applyMultiEdit, applySimpleEdit, createBackup, createUnifiedDiff } from "../utils/DiffEngine";
+import { mergeStreamingText } from "../utils/streamingText";
 
 // Type for content blocks from the SDK.
 interface TextBlock {
@@ -282,9 +283,9 @@ export class AgentController {
           const assistantMsg = message as SDKAssistantMessage;
           const { text, tools } = this.processAssistantMessage(assistantMsg);
 
-          // Only update content if there's new text (preserves previous text when tool-only messages arrive).
+          // Preserve earlier assistant text when later tool phases emit follow-up text.
           if (text) {
-            finalContent = text;
+            finalContent = mergeStreamingText(finalContent, text);
           }
 
           // Update tool calls.
@@ -349,9 +350,9 @@ export class AgentController {
               inputTokens: this.lastUsageSample.inputTokens,
               outputTokens: this.lastUsageSample.outputTokens,
             });
-            // Final result text may be in resultMsg.result.
-            if (resultMsg.result && !finalContent) {
-              finalContent = resultMsg.result;
+            // Final result text may be present and should merge with earlier assistant text.
+            if (resultMsg.result) {
+              finalContent = mergeStreamingText(finalContent, resultMsg.result);
             }
 
             // Mark any remaining running tools as success on completion.

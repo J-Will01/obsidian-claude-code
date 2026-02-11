@@ -11,6 +11,7 @@ import { CLAUDE_ICON_NAME } from "../utils/icons";
 import { revertFromBackup } from "../utils/DiffEngine";
 import { computeContextUsageEstimate } from "../utils/contextUsage";
 import type { Suggestion } from "../utils/autocomplete";
+import { mergeStreamingText } from "../utils/streamingText";
 import {
   getExternalSlashCommandOrigin,
   getExternalSlashCommandSuggestions,
@@ -735,6 +736,21 @@ export class ChatView extends ItemView {
     }, 0);
 
     return signals + slashSignals;
+  }
+
+  private mergeToolCalls(
+    previous?: ToolCall[],
+    incoming?: ToolCall[]
+  ): ToolCall[] | undefined {
+    const merged = new Map<string, ToolCall>();
+    for (const toolCall of previous ?? []) {
+      merged.set(toolCall.id, toolCall);
+    }
+    for (const toolCall of incoming ?? []) {
+      const existing = merged.get(toolCall.id);
+      merged.set(toolCall.id, existing ? { ...existing, ...toolCall } : toolCall);
+    }
+    return merged.size > 0 ? Array.from(merged.values()) : undefined;
   }
 
   private renderMessagesArea() {
@@ -1667,7 +1683,13 @@ export class ChatView extends ItemView {
         const shouldPinFinal = this.isNearBottom();
         const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
         if (streamingIndex !== -1) {
-          this.messages[streamingIndex] = response;
+          const previous = this.messages[streamingIndex];
+          this.messages[streamingIndex] = {
+            ...response,
+            id: previous.id,
+            content: mergeStreamingText(previous.content, response.content),
+            toolCalls: this.mergeToolCalls(previous.toolCalls, response.toolCalls),
+          };
         } else {
           this.messages.push(response);
         }
@@ -1744,7 +1766,14 @@ export class ChatView extends ItemView {
     if (this.streamingMessageId) {
       const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
       if (index !== -1) {
-        this.messages[index] = { ...message, id: this.streamingMessageId };
+        const previous = this.messages[index];
+        this.messages[index] = {
+          ...previous,
+          ...message,
+          id: this.streamingMessageId,
+          content: mergeStreamingText(previous.content, message.content),
+          toolCalls: this.mergeToolCalls(previous.toolCalls, message.toolCalls),
+        };
         this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
       }
     } else {

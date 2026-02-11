@@ -54,7 +54,23 @@ The settings page shows which authentication method is active.
 
 Toggle the sidebar with the ribbon icon or `Cmd+Shift+C`. Type your message and press Enter.
 
-Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`. Type `/` for slash commands: `/new` starts a fresh conversation, `/clear` clears history, `/file` adds the active file to context, `/context` shows the current context estimate breakdown, `/usage` shows plan usage (with local fallback), `/status` `/cost` `/permissions` `/mcp` show local session diagnostics, `/model [name]` updates the active model, `/rewind` restores the latest backup from this conversation, and `/checkpoint` lists available rewind checkpoints.
+Reference specific files using `@[[filename]]` syntax—the input field provides autocomplete when you type `@`.
+
+Slash command workflow is CLI-style:
+- Type `/` to open command suggestions.
+- `ArrowUp`/`ArrowDown` navigates suggestions.
+- `Enter` or `Tab` fills the selected command in the input.
+- Press `Enter` again to execute local commands or send passthrough commands.
+- `Shift+Tab` cycles permission mode: `default` -> `acceptEdits` -> `plan` -> `default`.
+
+Key slash commands:
+- `/help` shows a rich command catalog (grouped local commands, discovered SDK/project/personal/MCP commands, keyboard tips, and examples).
+- `/doctor` runs local diagnostics with recommended remediation (auth/session/model/context/MCP/permission usage checks).
+- `/new`, `/clear`, `/rename [title]` manage conversation state.
+- `/file [path]`, `/pin-file`, `/pin-selection`, `/pin-backlinks [count]`, `/pins`, `/clear-pins` manage context.
+- `/status`, `/context`, `/usage`, `/cost`, `/permissions`, `/mcp`, `/model [name]`, `/logs` show operational diagnostics.
+- `/rewind` restores the most recent backup and `/checkpoint` lists rewind checkpoints.
+- `/search [query]` is passthrough to Claude.
 
 When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
 
