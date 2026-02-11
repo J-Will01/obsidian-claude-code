@@ -856,34 +856,127 @@ export class ChatView extends ItemView {
         name: normalizeSlashCommandName(cmd.name),
         description: cmd.description,
         argumentHint: cmd.argumentHint,
+        origin: getExternalSlashCommandOrigin(cmd.name),
       }))
       .filter((cmd) => cmd.name && !localByValue.has(cmd.name.toLowerCase()));
+    const discoveredModels = this.agentController.getSupportedModels();
+    const supportedModels = discoveredModels.length > 0 ? discoveredModels : ["sonnet", "opus", "haiku"];
+    const topSlashCommands = this.plugin.getTopSlashCommands(24, 5);
+    const activeMcpServers = this.plugin.settings.additionalMcpServers
+      .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
+      .map((server) => server.name);
+    const pendingMcpApprovals = this.plugin.settings.additionalMcpServers.filter(
+      (server) => server.enabled && !this.plugin.settings.approvedMcpServers.includes(server.name)
+    ).length;
 
-    const lines: string[] = [
-      "- Local slash commands",
-      ...localCommands.map((cmd) => {
-        const usage = cmd.argumentHint ? `${cmd.command} ${cmd.argumentHint}` : cmd.command;
-        return `- \`${usage}\` - ${cmd.description}`;
-      }),
-      "",
-      "- Claude commands (discovered this session)",
-      ...(externalOnly.length > 0
-        ? externalOnly.map((cmd) => {
-          const usage = cmd.argumentHint ? `${cmd.name} ${cmd.argumentHint}` : cmd.name;
-          const description = cmd.description || "Claude command";
-          const source = getExternalSlashCommandOrigin(cmd.name);
-          return `- \`${usage}\` - ${description} (source: ${source})`;
-        })
-        : ["- `none discovered yet` (send a message first to populate SDK command metadata)"]),
-      "",
-      "- Examples",
-      "- `@[[Daily.md]] Summarize key tasks`",
-      "- `/model opus`",
-      "- `/permissions`",
-      "- `/search backlinks for this note`",
+    const localById = new Map(localCommands.map((command) => [command.id, command]));
+    const commandGroups: Array<{ title: string; ids: string[] }> = [
+      {
+        title: "Session & Diagnostics",
+        ids: ["help", "status", "cost", "usage", "context", "model", "permissions", "mcp", "logs"],
+      },
+      {
+        title: "Conversation",
+        ids: ["new", "clear", "rename", "checkpoint", "rewind"],
+      },
+      {
+        title: "Context Pinning",
+        ids: ["file", "pin-file", "pin-selection", "pin-backlinks", "pins", "clear-pins"],
+      },
     ];
 
+    const renderedLocal = new Set<string>();
+    const lines: string[] = [
+      "Use `/` to open command suggestions in the composer.",
+      "",
+      "#### Quick Start",
+      `- Current model: \`${this.plugin.settings.model}\` (available: \`${supportedModels.join(", ")}\`)`,
+      `- Permission mode: \`${this.plugin.settings.permissionMode}\``,
+      `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
+      pendingMcpApprovals > 0
+        ? `- MCP approvals pending: \`${pendingMcpApprovals}\` (run \`/mcp\`)`
+        : "- MCP approvals pending: `none`",
+      topSlashCommands.length > 0
+        ? `- Top commands (24h): \`${topSlashCommands.map((entry) => `${entry.command} (${entry.total})`).join(", ")}\``
+        : "- Top commands (24h): `none yet`",
+      "",
+      "#### Keyboard Controls",
+      "- `ArrowUp`/`ArrowDown`: move through autocomplete suggestions.",
+      "- `Enter`: fill selected suggestion; press `Enter` again to run/send.",
+      "- `Tab`: fill selected suggestion without sending.",
+      "- `Esc`: close autocomplete (or stop active stream).",
+      "",
+      "#### Local Commands",
+    ];
+
+    for (const group of commandGroups) {
+      const groupCommands = group.ids
+        .map((id) => localById.get(id))
+        .filter((command): command is NonNullable<typeof command> => !!command);
+      if (groupCommands.length === 0) continue;
+
+      lines.push(`- ${group.title}`);
+      for (const command of groupCommands) {
+        renderedLocal.add(command.id);
+        lines.push(`  - ${this.formatHelpCommand(command.command, command.argumentHint, command.description)}`);
+      }
+    }
+
+    const remainingLocal = localCommands.filter(
+      (command) => !renderedLocal.has(command.id) && command.handler === "local"
+    );
+    if (remainingLocal.length > 0) {
+      lines.push("- Other local commands");
+      for (const command of remainingLocal) {
+        lines.push(`  - ${this.formatHelpCommand(command.command, command.argumentHint, command.description)}`);
+      }
+    }
+
+    const passthroughCommands = localCommands.filter((command) => command.handler === "sendToClaude");
+    if (passthroughCommands.length > 0) {
+      lines.push("");
+      lines.push("#### Claude-Passthrough Commands");
+      for (const command of passthroughCommands) {
+        lines.push(`- ${this.formatHelpCommand(command.command, command.argumentHint, command.description)}`);
+      }
+    }
+
+    lines.push("");
+    lines.push("#### Discovered Claude Commands");
+    if (externalOnly.length === 0) {
+      lines.push("- `none discovered yet` (send one message to load SDK command metadata).");
+    } else {
+      const origins: Array<"sdk" | "project" | "personal" | "mcp"> = ["sdk", "project", "personal", "mcp"];
+      const labels: Record<"sdk" | "project" | "personal" | "mcp", string> = {
+        sdk: "Built-in",
+        project: "Project custom",
+        personal: "Personal custom",
+        mcp: "MCP",
+      };
+      for (const origin of origins) {
+        const commands = externalOnly.filter((cmd) => cmd.origin === origin);
+        if (commands.length === 0) continue;
+        lines.push(`- ${labels[origin]}`);
+        for (const command of commands) {
+          const usage = command.argumentHint ? `${command.name} ${command.argumentHint}` : command.name;
+          lines.push(`  - \`${usage}\` - ${command.description || "Claude command"}`);
+        }
+      }
+    }
+
+    lines.push("");
+    lines.push("#### Examples");
+    lines.push("- `@[[Daily.md]] Summarize key tasks and blockers`");
+    lines.push("- `/model opus`");
+    lines.push("- `/permissions`");
+    lines.push("- `/search backlinks for this note`");
+
     await this.appendLocalAssistantMessage("Help", lines.join("\n"));
+  }
+
+  private formatHelpCommand(command: string, argumentHint: string | undefined, description: string): string {
+    const usage = argumentHint ? `${command} ${argumentHint}` : command;
+    return `\`${usage}\` - ${description}`;
   }
 
   private formatUsageTime(iso?: string) {
