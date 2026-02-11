@@ -514,8 +514,9 @@ export class ChatView extends ItemView {
       weeklyRow.style.display = "none";
       if (source === "claudeAi") {
         usageFill.style.width = `0%`;
-        usageValue.setText("~");
-        if (usageSubtitle) usageSubtitle.setText("");
+        usageValue.setText("Unavailable");
+        const err = this.plugin.getClaudeAiPlanUsageError();
+        if (usageSubtitle) usageSubtitle.setText(err ? "Check /status for error" : "");
         lastUpdatedEl.setText("Last updated: --");
       } else {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
@@ -609,6 +610,9 @@ export class ChatView extends ItemView {
       case "cost":
         await this.showCostMessage();
         break;
+      case "usage":
+        await this.showUsageMessage();
+        break;
       case "model":
         await this.handleModelCommand(args);
         break;
@@ -629,9 +633,18 @@ export class ChatView extends ItemView {
     }
   }
 
+  private formatUsageTime(iso?: string) {
+    if (!iso) return "unknown";
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return "unknown";
+    return dt.toLocaleString();
+  }
+
   private async showStatusMessage() {
     const conv = this.conversationManager.getCurrentConversation();
     const auth = this.plugin.getAuthStatus();
+    const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const planErr = this.plugin.getClaudeAiPlanUsageError();
     const activeMcpServers = this.plugin.settings.additionalMcpServers
       .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
       .map((server) => server.name);
@@ -646,10 +659,50 @@ export class ChatView extends ItemView {
       `- Session ID: \`${this.agentController.getSessionId() || "none"}\``,
       `- Total tokens: \`${conv?.metadata?.totalTokens ?? 0}\``,
       `- Total cost: \`$${(conv?.metadata?.totalCostUsd ?? 0).toFixed(4)}\``,
+      `- Usage bar source: \`${this.plugin.settings.usageTelemetrySource || "auto"}\``,
+      `- Claude plan usage (cached): \`${plan ? "available" : "unavailable"}\``,
+      plan
+        ? `  - 5h: \`${plan.fiveHourUtilizationPercent.toFixed(0)}%\` (resets \`${this.formatUsageTime(plan.fiveHourResetsAt)}\`)`
+        : "",
+      plan && Number.isFinite(plan.sevenDayUtilizationPercent)
+        ? `  - 7d: \`${(plan.sevenDayUtilizationPercent ?? 0).toFixed(0)}%\` (resets \`${this.formatUsageTime(plan.sevenDayResetsAt)}\`)`
+        : "",
+      planErr ? `  - Last plan usage error: \`${planErr}\`` : "",
       `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
-    ];
+    ].filter(Boolean);
 
     await this.appendLocalAssistantMessage("Session Status", lines.join("\n"));
+  }
+
+  private async showUsageMessage() {
+    await this.plugin.refreshClaudeAiPlanUsageIfStale(0);
+    const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const planErr = this.plugin.getClaudeAiPlanUsageError();
+
+    if (!plan) {
+      const lines = [
+        "- Claude plan usage: `unavailable`",
+        planErr ? `- Last error: \`${planErr}\`` : "- Last error: `none`",
+        "",
+        "Notes:",
+        "- This uses Claude Code OAuth from macOS Keychain (`Claude Code-credentials`).",
+        "- If you see `TypeError: Failed to fetch`, it was likely blocked by CORS; the plugin prefers Obsidian `requestUrl()` now.",
+      ];
+      await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+      return;
+    }
+
+    const lines = [
+      `- Current session (5h): \`${plan.fiveHourUtilizationPercent.toFixed(0)}%\` used`,
+      `  - Resets at: \`${this.formatUsageTime(plan.fiveHourResetsAt)}\``,
+      Number.isFinite(plan.sevenDayUtilizationPercent)
+        ? `- Weekly limits (7d): \`${(plan.sevenDayUtilizationPercent ?? 0).toFixed(0)}%\` used`
+        : "- Weekly limits (7d): `unknown`",
+      plan.sevenDayResetsAt ? `  - Resets at: \`${this.formatUsageTime(plan.sevenDayResetsAt)}\`` : "",
+      `- Last updated: \`${new Date(plan.fetchedAt).toLocaleString()}\``,
+    ].filter(Boolean);
+
+    await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
   }
 
   private async showCostMessage() {

@@ -74,6 +74,13 @@ export const SLASH_COMMANDS: Suggestion[] = [
   },
   {
     type: "command",
+    value: "/usage",
+    label: "/usage",
+    description: "Show Claude plan usage (5-hour and 7-day)",
+    icon: "bar-chart-2",
+  },
+  {
+    type: "command",
     value: "/model",
     label: "/model [name]",
     description: "Show or change the active model",

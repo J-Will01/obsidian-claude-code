@@ -16,6 +16,7 @@ const LOCAL_COMMANDS = new Set([
   "clear",
   "status",
   "cost",
+  "usage",
   "model",
   "permissions",
   "mcp",
@@ -195,6 +196,10 @@ export class ChatInput {
         break;
       case "/cost":
         this.options.onCommand?.("cost", []);
+        this.textareaEl.value = "";
+        break;
+      case "/usage":
+        this.options.onCommand?.("usage", []);
         this.textareaEl.value = "";
         break;
       case "/model":

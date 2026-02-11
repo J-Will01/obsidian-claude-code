@@ -102,23 +102,43 @@ export async function fetchClaudeAiPlanUsage(): Promise<ClaudeAiPlanUsageSnapsho
   const accessToken = await readClaudeAiAccessToken();
   if (!accessToken) return null;
 
-  const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      // This header is required for this endpoint to accept the token in practice.
-      "anthropic-beta": "oauth-2025-04-20",
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      // Mimic a Claude Code UA to reduce the chance of server-side blocking.
-      "User-Agent": "claude-code/2.1.25",
-    },
-  });
+  const url = "https://api.anthropic.com/api/oauth/usage";
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    // This header is required for this endpoint to accept the token in practice.
+    "anthropic-beta": "oauth-2025-04-20",
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    // Mimic a Claude Code UA to reduce the chance of server-side blocking.
+    "User-Agent": "claude-code/2.1.25",
+  };
 
-  if (!res.ok) {
-    throw new Error(`Claude usage fetch failed: HTTP ${res.status}`);
+  // Prefer Obsidian's requestUrl to avoid CORS issues in the renderer fetch().
+  // Keep this optional so unit tests can run in plain Node.
+  try {
+    const obsidian = require("obsidian") as any;
+    if (typeof obsidian?.requestUrl === "function") {
+      const resp = await obsidian.requestUrl({
+        url,
+        method: "GET",
+        headers,
+      });
+      if (!resp || typeof resp.status !== "number") {
+        throw new Error("Claude usage fetch failed: invalid response");
+      }
+      if (resp.status < 200 || resp.status >= 300) {
+        throw new Error(`Claude usage fetch failed: HTTP ${resp.status}`);
+      }
+      const json = resp.json ?? (resp.text ? JSON.parse(resp.text) : null);
+      const parsed = parseClaudeAiUsageResponse(json, fetchedAt);
+      return parsed;
+    }
+  } catch (e) {
+    // Fall through to fetch() below.
+    logger.debug("claudeAiPlanUsage", "requestUrl path failed; falling back to fetch()", { error: String(e) });
   }
 
-  const json = await res.json();
-  return parseClaudeAiUsageResponse(json, fetchedAt);
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) throw new Error(`Claude usage fetch failed: HTTP ${res.status}`);
+  return parseClaudeAiUsageResponse(await res.json(), fetchedAt);
 }
