@@ -118,6 +118,36 @@ describe("ChatInput", () => {
   });
 
   describe("keyboard handling", () => {
+    it("should cycle permission mode with Shift+Tab", () => {
+      const plugin = createMockPlugin({
+        settings: {
+          permissionMode: "default",
+        },
+      });
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      keydown(textarea, "Tab", { shiftKey: true });
+      expect(plugin.settings.permissionMode).toBe("acceptEdits");
+
+      keydown(textarea, "Tab", { shiftKey: true });
+      expect(plugin.settings.permissionMode).toBe("plan");
+
+      keydown(textarea, "Tab", { shiftKey: true });
+      expect(plugin.settings.permissionMode).toBe("default");
+
+      expect(plugin.saveSettings).toHaveBeenCalledTimes(3);
+      expect(onSend).not.toHaveBeenCalled();
+      expect(onCommand).not.toHaveBeenCalled();
+    });
+
     it("should call onSend on Enter when not streaming", () => {
       const textarea = document.createElement("textarea");
       textarea.value = "Hello Claude";

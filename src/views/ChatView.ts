@@ -772,6 +772,7 @@ export class ChatView extends ItemView {
       onCommand: (command, args) => {
         void this.handleInputCommand(command, args);
       },
+      onPermissionModeChange: () => this.refreshProjectControls(),
       isStreaming: () => this.isStreaming,
       plugin: this.plugin,
     });
@@ -904,6 +905,7 @@ export class ChatView extends ItemView {
       "- `ArrowUp`/`ArrowDown`: move through autocomplete suggestions.",
       "- `Enter`: fill selected suggestion; press `Enter` again to run/send.",
       "- `Tab`: fill selected suggestion without sending.",
+      "- `Shift+Tab`: cycle permission mode (Ask to Accept -> Auto Accept Edits -> Plan).",
       "- `Esc`: close autocomplete (or stop active stream).",
       "",
       "#### Local Commands",

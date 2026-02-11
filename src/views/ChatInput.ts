@@ -1,4 +1,4 @@
-import { setIcon } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import type ClaudeCodePlugin from "../main";
 import { AutocompletePopup } from "./AutocompletePopup";
 import { logger } from "../utils/Logger";
@@ -16,6 +16,9 @@ interface ChatInputOptions {
   onCancel: () => void;
   isStreaming: () => boolean;
   onCommand?: (command: string, args: string[]) => void;
+  onPermissionModeChange?: (
+    mode: "default" | "acceptEdits" | "plan" | "bypassPermissions"
+  ) => void;
   getAdditionalCommandSuggestions?: () => Suggestion[];
   plugin: ClaudeCodePlugin;
 }
@@ -98,6 +101,13 @@ export class ChatInput {
   private handleKeydown(e: KeyboardEvent) {
     logger.debug("ChatInput", "Keydown event", { key: e.key, shiftKey: e.shiftKey });
 
+    // Claude Code parity: Shift+Tab cycles permission mode.
+    if (e.key === "Tab" && e.shiftKey) {
+      e.preventDefault();
+      void this.cyclePermissionMode();
+      return;
+    }
+
     // Let autocomplete handle navigation keys.
     if (this.autocomplete.isVisible() && this.autocomplete.handleKeydown(e)) {
       return;
@@ -152,6 +162,53 @@ export class ChatInput {
     }
 
     this.autocomplete.hide();
+  }
+
+  private getNextPermissionMode(mode: "default" | "acceptEdits" | "plan" | "bypassPermissions") {
+    switch (mode) {
+      case "default":
+        return "acceptEdits";
+      case "acceptEdits":
+        return "plan";
+      case "plan":
+      case "bypassPermissions":
+      default:
+        return "default";
+    }
+  }
+
+  private getPermissionModeLabel(mode: "default" | "acceptEdits" | "plan" | "bypassPermissions") {
+    switch (mode) {
+      case "default":
+        return "Ask to Accept";
+      case "acceptEdits":
+        return "Auto Accept Edits";
+      case "plan":
+        return "Plan";
+      case "bypassPermissions":
+      default:
+        return "Bypass";
+    }
+  }
+
+  private async cyclePermissionMode() {
+    const current = this.options.plugin.settings.permissionMode || "default";
+    const next = this.getNextPermissionMode(current);
+    this.options.plugin.settings.permissionMode = next;
+    this.options.onPermissionModeChange?.(next);
+
+    try {
+      await this.options.plugin.saveSettings();
+      new Notice(`Permission mode: ${this.getPermissionModeLabel(next)}`);
+      logger.info("ChatInput", "Permission mode cycled", { from: current, to: next });
+    } catch (error) {
+      logger.warn("ChatInput", "Failed to persist permission mode change", {
+        from: current,
+        to: next,
+        error: String(error),
+      });
+      new Notice("Failed to save permission mode change.");
+    }
   }
 
   private showAutocomplete(type: "command" | "file", query = "") {
