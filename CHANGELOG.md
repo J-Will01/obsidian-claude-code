@@ -17,3 +17,4 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Streaming assistant transcript text is now merged across tool-call phases instead of being overwritten by later assistant segments.
 - Final assistant message merge now preserves earlier content and tool-call context ordering during streaming completion.
+- Chat transcript ordering now keeps tool-call cards in sequence with streamed text by splitting post-tool assistant text into a continuation message when needed.

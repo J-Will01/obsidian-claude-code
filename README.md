@@ -73,6 +73,7 @@ Key slash commands:
 - `/search [query]` is passthrough to Claude.
 
 When Claude uses tools, the operations appear as collapsible blocks showing what happened and the result. Bash calls include stdout, stderr, exit code, and a copy-output button. Write operations can show a unified diff preview and provide a one-click revert.
+During streaming, assistant text is kept in chronological order around tool calls so follow-up text appears after the tool card instead of above it.
 
 The Project Controls panel (toggleable in settings) exposes model/budget/turn limits, auth status, active skills, MCP servers, and quick actions for pinning context like the active file or a text selection. The chat header also includes:
 - a rolling 5-hour usage bar (local spend vs configured 5-hour budget, or plan utilization when available),
