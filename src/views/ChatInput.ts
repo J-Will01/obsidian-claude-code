@@ -17,6 +17,7 @@ const LOCAL_COMMANDS = new Set([
   "status",
   "cost",
   "usage",
+  "context",
   "file",
   "rename",
   "pin-file",
@@ -35,7 +36,6 @@ const LOCAL_COMMANDS = new Set([
 export class ChatInput {
   private containerEl: HTMLElement;
   private textareaEl!: HTMLTextAreaElement;
-  private sendButtonEl!: HTMLButtonElement;
   private options: ChatInputOptions;
   private fileContexts: string[] = [];
   private autocomplete: AutocompletePopup;
@@ -57,28 +57,6 @@ export class ChatInput {
   }
 
   private render() {
-    // Quick actions bar.
-    const quickActionsEl = this.containerEl.createDiv({ cls: "claude-code-quick-actions" });
-
-    const addFileButton = quickActionsEl.createEl("button", { cls: "claude-code-quick-action" });
-    addFileButton.setText("+File");
-    addFileButton.addEventListener("click", () => this.handleAddFile());
-
-    const mentionButton = quickActionsEl.createEl("button", { cls: "claude-code-quick-action" });
-    mentionButton.setText("@mention");
-    mentionButton.addEventListener("click", () => {
-      this.insertAtCursor("@");
-      this.showAutocomplete("file");
-    });
-
-    const commandButton = quickActionsEl.createEl("button", { cls: "claude-code-quick-action" });
-    commandButton.setText("/command");
-    commandButton.addEventListener("click", () => {
-      this.textareaEl.value = "/";
-      this.textareaEl.focus();
-      this.showAutocomplete("command");
-    });
-
     // Input wrapper.
     const wrapperEl = this.containerEl.createDiv({ cls: "claude-code-input-wrapper" });
 
@@ -106,10 +84,6 @@ export class ChatInput {
       setTimeout(() => this.autocomplete.hide(), 200);
     });
 
-    // Send button.
-    this.sendButtonEl = wrapperEl.createEl("button", { cls: "claude-code-send-button" });
-    setIcon(this.sendButtonEl, "send");
-    this.sendButtonEl.addEventListener("click", () => this.handleSend());
   }
 
   private handleKeydown(e: KeyboardEvent) {
@@ -224,7 +198,8 @@ export class ChatInput {
         this.textareaEl.value = "Search the vault for: ";
         break;
       case "/context":
-        this.textareaEl.value = "Show me the current context and files being used.";
+        this.options.onCommand?.("context", []);
+        this.textareaEl.value = "";
         break;
       case "/status":
         this.options.onCommand?.("status", []);
@@ -337,6 +312,7 @@ export class ChatInput {
       this.fileContexts = [];
       this.updateContextChips();
     }
+    fullMessage = this.resolveStandaloneAtMention(fullMessage);
 
     logger.info("ChatInput", "Calling onSend callback", { fullMessageLength: fullMessage.length });
     this.options.onSend(fullMessage);
@@ -344,13 +320,6 @@ export class ChatInput {
     this.autoResize();
     this.autocomplete.hide();
     logger.info("ChatInput", "handleSend completed");
-  }
-
-  private handleAddFile() {
-    const activeFile = this.options.plugin.app.workspace.getActiveFile();
-    if (activeFile) {
-      this.addFileContext(activeFile.path);
-    }
   }
 
   addFileContext(path: string) {
@@ -369,7 +338,7 @@ export class ChatInput {
 
     if (this.fileContexts.length === 0) return;
 
-    // Add context chips before quick actions.
+    // Add context chips at the top of the input area.
     const chipsEl = this.containerEl.createDiv({ cls: "claude-code-context-chips" });
     this.containerEl.insertBefore(chipsEl, this.containerEl.firstChild);
 
@@ -400,15 +369,24 @@ export class ChatInput {
     this.textareaEl.style.height = Math.min(this.textareaEl.scrollHeight, 200) + "px";
   }
 
+  private resolveStandaloneAtMention(message: string): string {
+    const activeFile = this.options.plugin.app.workspace.getActiveFile();
+    if (!activeFile?.path) {
+      return message;
+    }
+
+    const activeMention = `@[[${activeFile.path}]]`;
+    // Convert bare "@" tokens (eg "@ hello") to the active-file mention.
+    // Keep "@foo" and existing "@[[...]]" mentions unchanged.
+    return message.replace(/(^|\s)@(?!\[\[)(?=\s|$)/g, `$1${activeMention}`);
+  }
+
   updateState() {
     const streaming = this.options.isStreaming();
-    this.sendButtonEl.disabled = streaming;
 
     if (streaming) {
-      setIcon(this.sendButtonEl, "square");
       this.textareaEl.placeholder = "Press Escape to cancel...";
     } else {
-      setIcon(this.sendButtonEl, "send");
       this.textareaEl.placeholder = "Ask about your vault...";
     }
   }

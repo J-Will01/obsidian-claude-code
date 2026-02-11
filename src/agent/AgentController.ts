@@ -37,6 +37,9 @@ export interface UsageSample {
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  contextTokens: number;
   totalTokens: number;
 }
 
@@ -320,10 +323,14 @@ export class AgentController {
             );
             const totalTokens =
               inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+            const contextTokens = inputTokens + cacheReadInputTokens + cacheCreationInputTokens;
             this.lastUsageSample = {
               costUsd: resultMsg.total_cost_usd || 0,
               inputTokens,
               outputTokens,
+              cacheReadInputTokens,
+              cacheCreationInputTokens,
+              contextTokens,
               totalTokens,
             };
             void this.plugin.recordUsageEvent({

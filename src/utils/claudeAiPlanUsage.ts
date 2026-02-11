@@ -97,9 +97,11 @@ export function parseClaudeAiUsageResponse(json: any, fetchedAt: number): Claude
   };
 }
 
-export async function fetchClaudeAiPlanUsage(): Promise<ClaudeAiPlanUsageSnapshot | null> {
+export async function fetchClaudeAiPlanUsage(opts?: {
+  accessToken?: string;
+}): Promise<ClaudeAiPlanUsageSnapshot | null> {
   const fetchedAt = Date.now();
-  const accessToken = await readClaudeAiAccessToken();
+  const accessToken = (opts?.accessToken && opts.accessToken.trim()) || (await readClaudeAiAccessToken());
   if (!accessToken) return null;
 
   const url = "https://api.anthropic.com/api/oauth/usage";

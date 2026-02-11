@@ -135,17 +135,38 @@
 .claude-code-telemetry-bars {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--background-modifier-border);
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border-top: none;
   background: var(--background-secondary-alt);
 }
 
-.claude-code-telemetry-row {
+.claude-code-telemetry-inline {
   display: grid;
-  grid-template-columns: 74px 1fr 46px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.claude-code-telemetry-segment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.claude-code-telemetry-inline-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.claude-code-telemetry-divider {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1;
 }
 
 .claude-code-telemetry-label {
@@ -168,10 +189,11 @@
 
 .claude-code-telemetry-track {
   position: relative;
-  height: 7px;
+  height: 8px;
   background: var(--background-modifier-hover);
   border-radius: 999px;
   overflow: hidden;
+  min-width: 0;
 }
 
 .claude-code-telemetry-fill {
@@ -203,8 +225,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 6px;
 }
 
 .claude-code-telemetry-meta-info {
@@ -216,7 +237,8 @@
 }
 
 .claude-code-telemetry-reset,
-.claude-code-telemetry-weekly-reset {
+.claude-code-telemetry-weekly-reset,
+.claude-code-telemetry-weekly-usage {
   font-size: 10px;
   color: var(--text-faint);
   white-space: nowrap;
@@ -225,6 +247,16 @@
 .claude-code-telemetry-reset {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (max-width: 520px) {
+  .claude-code-telemetry-inline {
+    gap: 6px;
+  }
+
+  .claude-code-telemetry-segment {
+    gap: 4px;
+  }
 }
 
 .claude-code-context-chip {
@@ -247,7 +279,7 @@
 
 /* Individual Message */
 .claude-code-message {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   padding: 8px 12px;
   border-radius: 8px;
 }
@@ -272,17 +304,46 @@
 
 .claude-code-message-content {
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.42;
   user-select: text;
   -webkit-user-select: text;
 }
 
 .claude-code-message-content p {
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
 }
 
 .claude-code-message-content p:last-child {
   margin-bottom: 0;
+}
+
+/* Compact markdown spacing for chat readability. */
+.claude-code-message-content :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.9em;
+  margin-bottom: 0.3em;
+  line-height: 1.25;
+}
+
+.claude-code-message-content :is(ul, ol) {
+  margin-top: 0.25em;
+  margin-bottom: 0.5em;
+  padding-inline-start: 1.2em;
+}
+
+.claude-code-message-content li {
+  margin: 0.12em 0;
+}
+
+.claude-code-message-content li > p {
+  margin: 0.12em 0;
+}
+
+.claude-code-message-content blockquote {
+  margin: 0.45em 0;
+}
+
+.claude-code-message-content hr {
+  margin: 0.6em 0;
 }
 
 /* Tool Calls */
@@ -504,54 +565,42 @@
   white-space: pre-wrap;
 }
 
-/* Quick Actions */
-.claude-code-quick-actions {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--background-modifier-border);
-  background-color: var(--background-secondary);
-}
-
-.claude-code-quick-action {
-  padding: 4px 8px;
-  font-size: 11px;
-  border-radius: 4px;
-  background-color: var(--background-modifier-hover);
-  border: 1px solid var(--background-modifier-border);
-  cursor: pointer;
-  color: var(--text-muted);
-}
-
-.claude-code-quick-action:hover {
-  background-color: var(--interactive-hover);
-  color: var(--text-normal);
-}
-
 /* Input Area */
 .claude-code-input-container {
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
-  padding: 12px;
-  border-top: 1px solid var(--background-modifier-border);
+  padding: 8px 12px 6px;
+  border-top: none;
   background-color: var(--background-secondary);
 }
 
 .claude-code-input-wrapper {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  display: block;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.claude-code-input-wrapper:focus-within {
+  border-bottom-color: var(--interactive-accent);
+  background-color: var(--background-modifier-hover);
+  background: color-mix(in srgb, var(--background-primary) 92%, var(--interactive-accent) 8%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 28%, transparent);
 }
 
 .claude-code-input {
-  flex: 1;
-  min-height: 40px;
+  width: 100%;
+  min-height: 32px;
   max-height: 200px;
-  padding: 8px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background-color: var(--background-primary);
+  padding: 6px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-normal);
   font-size: 14px;
   resize: none;
@@ -560,34 +609,19 @@
 }
 
 .claude-code-input:focus {
-  outline: none;
-  border-color: var(--interactive-accent);
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.claude-code-input:focus-visible {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .claude-code-input::placeholder {
   color: var(--text-muted);
-}
-
-.claude-code-send-button {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background-color: var(--interactive-accent);
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-on-accent);
-}
-
-.claude-code-send-button:hover {
-  background-color: var(--interactive-accent-hover);
-}
-
-.claude-code-send-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Loading/Streaming State */
@@ -731,10 +765,10 @@
 
 .claude-code-message-content pre {
   background-color: var(--code-background);
-  padding: 12px;
+  padding: 10px;
   border-radius: 6px;
   overflow-x: auto;
-  margin: 8px 0;
+  margin: 6px 0;
 }
 
 .claude-code-message-content pre code {

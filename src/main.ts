@@ -179,7 +179,9 @@ export default class ClaudeCodePlugin extends Plugin {
 
     this.claudeAiPlanUsageInFlight = (async () => {
       try {
-        const snapshot = await fetchClaudeAiPlanUsage();
+        const snapshot = await fetchClaudeAiPlanUsage({
+          accessToken: this.getOAuthToken() || undefined,
+        });
         this.claudeAiPlanUsage = snapshot;
         this.claudeAiPlanUsageLastFetchedAt = now;
         this.claudeAiPlanUsageLastError = null;

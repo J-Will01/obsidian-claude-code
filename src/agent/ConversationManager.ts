@@ -22,6 +22,14 @@ interface ConversationIndex {
   activeConversationId: string | null;
 }
 
+type UsageMetadataUpdate = {
+  latestContextTokens?: number;
+  latestInputTokens?: number;
+  latestOutputTokens?: number;
+  latestCacheReadInputTokens?: number;
+  latestCacheCreationInputTokens?: number;
+};
+
 export class ConversationManager {
   private plugin: ClaudeCodePlugin;
   private index: ConversationIndex = {
@@ -100,6 +108,20 @@ export class ConversationManager {
     }
   }
 
+  private normalizeMetadata(metadata?: Conversation["metadata"]): Conversation["metadata"] {
+    return {
+      totalTokens: metadata?.totalTokens ?? 0,
+      totalCostUsd: metadata?.totalCostUsd ?? 0,
+      inputTokens: metadata?.inputTokens ?? 0,
+      outputTokens: metadata?.outputTokens ?? 0,
+      latestContextTokens: metadata?.latestContextTokens ?? 0,
+      latestInputTokens: metadata?.latestInputTokens ?? 0,
+      latestOutputTokens: metadata?.latestOutputTokens ?? 0,
+      latestCacheReadInputTokens: metadata?.latestCacheReadInputTokens ?? 0,
+      latestCacheCreationInputTokens: metadata?.latestCacheCreationInputTokens ?? 0,
+    };
+  }
+
   // Create a new conversation.
   async createConversation(title?: string): Promise<Conversation> {
     await this.initialize();
@@ -119,6 +141,11 @@ export class ConversationManager {
         totalCostUsd: 0,
         inputTokens: 0,
         outputTokens: 0,
+        latestContextTokens: 0,
+        latestInputTokens: 0,
+        latestOutputTokens: 0,
+        latestCacheReadInputTokens: 0,
+        latestCacheCreationInputTokens: 0,
       },
       pinnedContext: [],
       history: [],
@@ -163,12 +190,7 @@ export class ConversationManager {
       const content = await vault.adapter.read(path);
       const conversation = JSON.parse(content) as StoredConversation;
       conversation.pinnedContext = conversation.pinnedContext ?? [];
-      conversation.metadata = {
-        totalTokens: conversation.metadata?.totalTokens ?? 0,
-        totalCostUsd: conversation.metadata?.totalCostUsd ?? 0,
-        inputTokens: conversation.metadata?.inputTokens ?? 0,
-        outputTokens: conversation.metadata?.outputTokens ?? 0,
-      };
+      conversation.metadata = this.normalizeMetadata(conversation.metadata);
       this.currentConversation = conversation;
       this.index.activeConversationId = id;
       await this.saveIndex();
@@ -224,13 +246,29 @@ export class ConversationManager {
   }
 
   // Update usage metadata.
-  async updateUsage(tokens: number, costUsd: number, inputTokens = 0, outputTokens = 0) {
+  async updateUsage(
+    tokens: number,
+    costUsd: number,
+    inputTokens = 0,
+    outputTokens = 0,
+    metadata?: UsageMetadataUpdate
+  ) {
     if (!this.currentConversation) return;
 
     this.currentConversation.metadata.totalTokens += tokens;
     this.currentConversation.metadata.totalCostUsd += costUsd;
     this.currentConversation.metadata.inputTokens = (this.currentConversation.metadata.inputTokens ?? 0) + inputTokens;
     this.currentConversation.metadata.outputTokens = (this.currentConversation.metadata.outputTokens ?? 0) + outputTokens;
+    if (metadata) {
+      this.currentConversation.metadata.latestContextTokens = Math.max(0, metadata.latestContextTokens ?? 0);
+      this.currentConversation.metadata.latestInputTokens = Math.max(0, metadata.latestInputTokens ?? 0);
+      this.currentConversation.metadata.latestOutputTokens = Math.max(0, metadata.latestOutputTokens ?? 0);
+      this.currentConversation.metadata.latestCacheReadInputTokens = Math.max(0, metadata.latestCacheReadInputTokens ?? 0);
+      this.currentConversation.metadata.latestCacheCreationInputTokens = Math.max(
+        0,
+        metadata.latestCacheCreationInputTokens ?? 0
+      );
+    }
 
     await this.saveConversation(this.currentConversation);
     await this.updateIndexEntry(this.currentConversation);
@@ -241,10 +279,11 @@ export class ConversationManager {
     tokens: number,
     costUsd: number,
     inputTokens = 0,
-    outputTokens = 0
+    outputTokens = 0,
+    metadata?: UsageMetadataUpdate
   ) {
     if (this.currentConversation?.id === conversationId) {
-      await this.updateUsage(tokens, costUsd, inputTokens, outputTokens);
+      await this.updateUsage(tokens, costUsd, inputTokens, outputTokens, metadata);
       return;
     }
 
@@ -256,16 +295,18 @@ export class ConversationManager {
     }
     const content = await vault.adapter.read(path);
     const conversation = JSON.parse(content) as StoredConversation;
-    conversation.metadata = {
-      totalTokens: conversation.metadata?.totalTokens ?? 0,
-      totalCostUsd: conversation.metadata?.totalCostUsd ?? 0,
-      inputTokens: conversation.metadata?.inputTokens ?? 0,
-      outputTokens: conversation.metadata?.outputTokens ?? 0,
-    };
+    conversation.metadata = this.normalizeMetadata(conversation.metadata);
     conversation.metadata.totalTokens += tokens;
     conversation.metadata.totalCostUsd += costUsd;
     conversation.metadata.inputTokens = (conversation.metadata.inputTokens ?? 0) + inputTokens;
     conversation.metadata.outputTokens = (conversation.metadata.outputTokens ?? 0) + outputTokens;
+    if (metadata) {
+      conversation.metadata.latestContextTokens = Math.max(0, metadata.latestContextTokens ?? 0);
+      conversation.metadata.latestInputTokens = Math.max(0, metadata.latestInputTokens ?? 0);
+      conversation.metadata.latestOutputTokens = Math.max(0, metadata.latestOutputTokens ?? 0);
+      conversation.metadata.latestCacheReadInputTokens = Math.max(0, metadata.latestCacheReadInputTokens ?? 0);
+      conversation.metadata.latestCacheCreationInputTokens = Math.max(0, metadata.latestCacheCreationInputTokens ?? 0);
+    }
     await this.saveConversation(conversation);
     await this.updateIndexEntry(conversation);
   }
@@ -466,7 +507,10 @@ export class ConversationManager {
       if (!exists) return null;
 
       const content = await vault.adapter.read(path);
-      return JSON.parse(content) as StoredConversation;
+      const conversation = JSON.parse(content) as StoredConversation;
+      conversation.pinnedContext = conversation.pinnedContext ?? [];
+      conversation.metadata = this.normalizeMetadata(conversation.metadata);
+      return conversation;
     } catch (error) {
       logger.error("ConversationManager", "Failed to load conversation by ID", { error: String(error), id });
       return null;

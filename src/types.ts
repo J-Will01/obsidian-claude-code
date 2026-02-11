@@ -171,6 +171,11 @@ export interface Conversation {
     totalCostUsd: number;
     inputTokens?: number;
     outputTokens?: number;
+    latestContextTokens?: number;
+    latestInputTokens?: number;
+    latestOutputTokens?: number;
+    latestCacheReadInputTokens?: number;
+    latestCacheCreationInputTokens?: number;
   };
   pinnedContext?: MessageContext[];
 }

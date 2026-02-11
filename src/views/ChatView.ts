@@ -9,6 +9,7 @@ import { ConversationHistoryModal } from "./ConversationHistoryModal";
 import { logger } from "../utils/Logger";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
 import { revertFromBackup } from "../utils/DiffEngine";
+import { computeContextUsageEstimate } from "../utils/contextUsage";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -145,9 +146,9 @@ export class ChatView extends ItemView {
     }
 
     this.renderHeader();
-    this.renderTelemetryBars();
     this.renderMessagesArea();
     this.renderInputArea();
+    this.renderTelemetryBars();
   }
 
   private renderSetupNotice() {
@@ -460,33 +461,27 @@ export class ChatView extends ItemView {
   private renderTelemetryBars() {
     this.telemetryEl?.remove();
     this.telemetryEl = this.contentEl.createDiv({ cls: "claude-code-telemetry-bars" });
+    const telemetryInline = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-inline" });
 
-    const usageRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
-    const usageLabel = usageRow.createDiv({ cls: "claude-code-telemetry-label" });
-    usageLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "5h Usage" });
-    const usageTrack = usageRow.createDiv({ cls: "claude-code-telemetry-track" });
+    const usageSegment = telemetryInline.createDiv({ cls: "claude-code-telemetry-segment" });
+    usageSegment.createDiv({ cls: "claude-code-telemetry-inline-label", text: "5H" });
+    const usageTrack = usageSegment.createDiv({ cls: "claude-code-telemetry-track" });
     usageTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-usage-fill" });
-    usageRow.createDiv({ cls: "claude-code-telemetry-value claude-code-usage-value" });
+    usageSegment.createDiv({ cls: "claude-code-telemetry-value claude-code-usage-value" });
 
-    const weeklyRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row claude-code-weekly-row" });
-    weeklyRow.style.display = "none";
-    const weeklyLabel = weeklyRow.createDiv({ cls: "claude-code-telemetry-label" });
-    weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "7d Usage" });
-    const weeklyTrack = weeklyRow.createDiv({ cls: "claude-code-telemetry-track" });
-    weeklyTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-weekly-fill" });
-    weeklyRow.createDiv({ cls: "claude-code-telemetry-value claude-code-weekly-value" });
+    telemetryInline.createDiv({ cls: "claude-code-telemetry-divider", text: "|" });
 
-    const contextRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
-    const contextLabel = contextRow.createDiv({ cls: "claude-code-telemetry-label" });
-    contextLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "Context (est.)" });
-    const contextTrack = contextRow.createDiv({ cls: "claude-code-telemetry-track" });
+    const contextSegment = telemetryInline.createDiv({ cls: "claude-code-telemetry-segment" });
+    contextSegment.createDiv({ cls: "claude-code-telemetry-inline-label", text: "context" });
+    const contextTrack = contextSegment.createDiv({ cls: "claude-code-telemetry-track" });
     contextTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-context-fill" });
-    contextRow.createDiv({ cls: "claude-code-telemetry-value claude-code-context-value" });
+    contextSegment.createDiv({ cls: "claude-code-telemetry-value claude-code-context-value" });
 
     const metaRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-meta" });
     const metaInfo = metaRow.createDiv({ cls: "claude-code-telemetry-meta-info" });
     metaInfo.createDiv({ cls: "claude-code-telemetry-reset", text: "5h reset: --" });
     metaInfo.createDiv({ cls: "claude-code-telemetry-weekly-reset", text: "7d reset: --" });
+    metaInfo.createDiv({ cls: "claude-code-telemetry-weekly-usage", text: "7d usage: --" });
 
     this.updateTelemetryBars();
     if (this.telemetryIntervalId !== null) {
@@ -510,14 +505,12 @@ export class ChatView extends ItemView {
 
     const usageFill = this.telemetryEl.querySelector(".claude-code-usage-fill") as HTMLElement | null;
     const usageValue = this.telemetryEl.querySelector(".claude-code-usage-value") as HTMLElement | null;
-    const weeklyRow = this.telemetryEl.querySelector(".claude-code-weekly-row") as HTMLElement | null;
-    const weeklyFill = this.telemetryEl.querySelector(".claude-code-weekly-fill") as HTMLElement | null;
-    const weeklyValue = this.telemetryEl.querySelector(".claude-code-weekly-value") as HTMLElement | null;
     const contextFill = this.telemetryEl.querySelector(".claude-code-context-fill") as HTMLElement | null;
     const contextValue = this.telemetryEl.querySelector(".claude-code-context-value") as HTMLElement | null;
     const resetEl = this.telemetryEl.querySelector(".claude-code-telemetry-reset") as HTMLElement | null;
     const weeklyResetEl = this.telemetryEl.querySelector(".claude-code-telemetry-weekly-reset") as HTMLElement | null;
-    if (!usageFill || !usageValue || !weeklyRow || !weeklyFill || !weeklyValue || !contextFill || !contextValue || !resetEl || !weeklyResetEl) return;
+    const weeklyUsageEl = this.telemetryEl.querySelector(".claude-code-telemetry-weekly-usage") as HTMLElement | null;
+    if (!usageFill || !usageValue || !contextFill || !contextValue || !resetEl || !weeklyResetEl || !weeklyUsageEl) return;
 
     const source = this.plugin.settings.usageTelemetrySource || "auto";
     if (source !== "budget") {
@@ -566,21 +559,24 @@ export class ChatView extends ItemView {
       const threshold = Math.max(0, Math.min(100, this.plugin.settings.weeklyUsageAlertThresholdPercent ?? 80));
       const weeklyPercent = snapshot.sevenDayUtilizationPercent;
       const showWeekly = Number.isFinite(weeklyPercent) && (weeklyPercent as number) >= threshold;
-      weeklyRow.style.display = showWeekly ? "" : "none";
       if (showWeekly && typeof weeklyPercent === "number") {
         const clamped = Math.max(0, Math.min(100, weeklyPercent));
-        weeklyFill.style.width = `${clamped}%`;
-        weeklyValue.setText(`${clamped.toFixed(0)} %`);
+        weeklyUsageEl.setText(`7d usage: ${clamped.toFixed(0)} %`);
+      } else {
+        weeklyUsageEl.setText("7d usage: --");
       }
     } else {
-      weeklyRow.style.display = "none";
       if (source === "claudeAi") {
-        usageFill.style.width = `0%`;
-        usageValue.setText("—");
-        usageValue.removeAttribute("title");
+        const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
+        const rolling = this.plugin.getRollingUsageSummary(5);
+        const fallbackPercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+        usageFill.style.width = `${fallbackPercent}%`;
+        usageValue.setText(`${fallbackPercent.toFixed(0)} %`);
+        usageValue.setAttribute("title", `Local fallback: $${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
         const err = this.plugin.getClaudeAiPlanUsageError();
-        resetEl.setText(err ? "5h reset: unavailable" : "5h reset: --");
-        weeklyResetEl.setText(err ? "7d reset: unavailable" : "7d reset: --");
+        resetEl.setText(err ? "5h reset: unavailable" : "5h reset: unavailable (no plan data)");
+        weeklyResetEl.setText(err ? "7d reset: unavailable" : "7d reset: unavailable (no plan data)");
+        weeklyUsageEl.setText(err ? "7d usage: unavailable" : "7d usage: --");
       } else {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
@@ -590,17 +586,28 @@ export class ChatView extends ItemView {
         usageValue.setAttribute("title", `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
         resetEl.setText("5h reset: --");
         weeklyResetEl.setText("7d reset: --");
+        weeklyUsageEl.setText("7d usage: --");
       }
     }
 
     const conv = this.conversationManager.getCurrentConversation();
     const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
-    // Prefer totalTokens since it includes cache-related tokens; inputTokens can be 0 for cache-heavy sessions.
-    const usedTokens = Math.max(0, conv?.metadata?.totalTokens ?? 0, conv?.metadata?.inputTokens ?? 0);
-    const contextPercent = Math.min(100, (usedTokens / contextWindow) * 100);
-    contextFill.style.width = `${contextPercent}%`;
-    contextValue.setText(`${contextPercent.toFixed(0)} %`);
-    contextValue.setAttribute("title", `${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`);
+    const contextEstimate = computeContextUsageEstimate({
+      contextWindow,
+      metadata: conv?.metadata,
+      history: this.conversationManager.getHistory(),
+      pinnedContext: this.conversationManager.getPinnedContext(),
+    });
+    contextFill.style.width = `${contextEstimate.percentUsed}%`;
+    contextValue.setText(`${contextEstimate.percentUsed.toFixed(0)} %`);
+    const sourceLabel =
+      contextEstimate.source === "latestTurn"
+        ? "latest turn input/cache"
+        : "estimated from history/pinned context";
+    contextValue.setAttribute(
+      "title",
+      `${contextEstimate.usedTokens.toLocaleString()} / ${contextEstimate.contextWindow.toLocaleString()} tokens (${sourceLabel})`
+    );
   }
 
   private renderMessagesArea() {
@@ -657,6 +664,9 @@ export class ChatView extends ItemView {
         break;
       case "usage":
         await this.showUsageMessage();
+        break;
+      case "context":
+        await this.showContextMessage();
         break;
       case "file":
         await this.handleFileContextCommand(args);
@@ -747,11 +757,15 @@ export class ChatView extends ItemView {
     await this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true });
     const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
     const planErr = this.plugin.getClaudeAiPlanUsageError();
+    const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
+    const rolling = this.plugin.getRollingUsageSummary(5);
+    const localUsagePercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
 
     if (!plan) {
       const lines = [
         "- Claude plan usage: `unavailable`",
         planErr ? `- Last error: \`${planErr}\`` : "- Last error: `none`",
+        `- Local 5h usage (fallback): \`${localUsagePercent.toFixed(0)}%\` (\`$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}\`)`,
       ];
       await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
       return;
@@ -768,6 +782,46 @@ export class ChatView extends ItemView {
     ].filter(Boolean);
 
     await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+  }
+
+  private renderAsciiUsageBar(percent: number, width = 24): string {
+    const clamped = Math.max(0, Math.min(100, percent));
+    const filled = Math.round((clamped / 100) * width);
+    return `[${"#".repeat(filled)}${"-".repeat(Math.max(0, width - filled))}]`;
+  }
+
+  private async showContextMessage() {
+    const conv = this.conversationManager.getCurrentConversation();
+    const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
+    const estimate = computeContextUsageEstimate({
+      contextWindow,
+      metadata: conv?.metadata,
+      history: this.conversationManager.getHistory(),
+      pinnedContext: this.conversationManager.getPinnedContext(),
+    });
+    const sourceDescription =
+      estimate.source === "latestTurn"
+        ? "latest SDK turn usage (input + cache tokens)"
+        : "fallback estimate (history + pinned context + baseline system/tools)";
+
+    const lines = [
+      `- Model: \`${this.plugin.settings.model}\``,
+      `- Conversation: \`${conv?.title || "New Conversation"}\``,
+      `- Context usage: \`${estimate.usedTokens.toLocaleString()} / ${estimate.contextWindow.toLocaleString()} tokens (${estimate.percentUsed.toFixed(1)}%)\``,
+      `- ${this.renderAsciiUsageBar(estimate.percentUsed)}`,
+      `- Source: \`${sourceDescription}\``,
+      "",
+      "- Breakdown",
+      `- Latest input tokens: \`${estimate.breakdown.latestInputTokens.toLocaleString()}\``,
+      `- Latest cache read tokens: \`${estimate.breakdown.latestCacheReadInputTokens.toLocaleString()}\``,
+      `- Latest cache write tokens: \`${estimate.breakdown.latestCacheCreationInputTokens.toLocaleString()}\``,
+      `- History estimate: \`${estimate.breakdown.estimatedHistoryTokens.toLocaleString()}\``,
+      `- Pinned context estimate: \`${estimate.breakdown.estimatedPinnedTokens.toLocaleString()}\``,
+      `- System/tools baseline estimate: \`${estimate.breakdown.estimatedSystemAndToolsTokens.toLocaleString()}\``,
+      `- Free space: \`${estimate.breakdown.freeTokens.toLocaleString()}\``,
+    ];
+
+    await this.appendLocalAssistantMessage("Context", lines.join("\n"));
   }
 
   private async showCostMessage() {
@@ -1240,7 +1294,14 @@ export class ChatView extends ItemView {
             usageSample.totalTokens,
             usageSample.costUsd,
             usageSample.inputTokens,
-            usageSample.outputTokens
+            usageSample.outputTokens,
+            {
+              latestContextTokens: usageSample.contextTokens,
+              latestInputTokens: usageSample.inputTokens,
+              latestOutputTokens: usageSample.outputTokens,
+              latestCacheReadInputTokens: usageSample.cacheReadInputTokens,
+              latestCacheCreationInputTokens: usageSample.cacheCreationInputTokens,
+            }
           );
         }
         const sessionId = this.agentController.getSessionId();
@@ -1294,6 +1355,7 @@ export class ChatView extends ItemView {
       this.streamingMessageId = null;
       this.activeStreamConversationId = null;
       this.chatInput.updateState();
+      this.refreshProjectControls();
     }
   }
 
@@ -1614,7 +1676,14 @@ export class ChatView extends ItemView {
             usageSample.totalTokens,
             usageSample.costUsd,
             usageSample.inputTokens,
-            usageSample.outputTokens
+            usageSample.outputTokens,
+            {
+              latestContextTokens: usageSample.contextTokens,
+              latestInputTokens: usageSample.inputTokens,
+              latestOutputTokens: usageSample.outputTokens,
+              latestCacheReadInputTokens: usageSample.cacheReadInputTokens,
+              latestCacheCreationInputTokens: usageSample.cacheCreationInputTokens,
+            }
           );
         }
         const sessionId = this.agentController.getSessionId();
@@ -1659,6 +1728,7 @@ export class ChatView extends ItemView {
       this.streamingMessageId = null;
       this.activeStreamConversationId = null;
       this.chatInput.updateState();
+      this.refreshProjectControls();
     }
   }
 

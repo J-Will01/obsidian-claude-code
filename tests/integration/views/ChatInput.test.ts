@@ -30,33 +30,30 @@ describe("ChatInput", () => {
       expect(container.querySelector("textarea")).toBeTruthy();
     });
 
-    it("should create send button", () => {
-      const button = document.createElement("button");
-      button.className = "claude-code-send-button";
-      container.appendChild(button);
+    it("should not render a send button", () => {
+      const plugin = createMockPlugin();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand: vi.fn(),
+        plugin: plugin as any,
+      });
 
-      expect(container.querySelector(".claude-code-send-button")).toBeTruthy();
+      expect(container.querySelector(".claude-code-send-button")).toBeNull();
     });
 
-    it("should create quick action buttons", () => {
-      const quickActions = document.createElement("div");
-      quickActions.className = "claude-code-quick-actions";
+    it("should not render quick action buttons", () => {
+      const plugin = createMockPlugin();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand: vi.fn(),
+        plugin: plugin as any,
+      });
 
-      const addFile = document.createElement("button");
-      addFile.textContent = "+File";
-      quickActions.appendChild(addFile);
-
-      const mention = document.createElement("button");
-      mention.textContent = "@mention";
-      quickActions.appendChild(mention);
-
-      const command = document.createElement("button");
-      command.textContent = "/command";
-      quickActions.appendChild(command);
-
-      container.appendChild(quickActions);
-
-      expect(container.querySelectorAll(".claude-code-quick-actions button").length).toBe(3);
+      expect(container.querySelector(".claude-code-quick-actions")).toBeNull();
     });
 
     it("should have placeholder text", () => {
@@ -197,6 +194,28 @@ describe("ChatInput", () => {
       }
 
       expect(textarea.value).toBe("");
+    });
+
+    it("should default standalone @ to the active file mention", () => {
+      const plugin = createMockPlugin();
+      plugin.app.workspace.getActiveFile.mockReturnValue({
+        path: "notes/today.md",
+        basename: "today",
+      });
+
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand: vi.fn(),
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "@ Summarize this");
+      pressEnter(textarea);
+
+      expect(onSend).toHaveBeenCalledWith("@[[notes/today.md]] Summarize this");
     });
   });
 
@@ -454,6 +473,25 @@ describe("ChatInput", () => {
       pressEnter(textarea);
 
       expect(onCommand).toHaveBeenCalledWith("checkpoint", []);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("should execute /context as a local command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/context");
+      pressEnter(textarea);
+
+      expect(onCommand).toHaveBeenCalledWith("context", []);
       expect(onSend).not.toHaveBeenCalled();
     });
 

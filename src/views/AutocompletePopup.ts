@@ -102,9 +102,17 @@ export class AutocompletePopup {
   private getFileSuggestions(query: string): Suggestion[] {
     const q = query.toLowerCase();
     const files = this.plugin.app.vault.getMarkdownFiles();
+    const activeFilePath = this.plugin.app.workspace.getActiveFile()?.path;
 
     return files
       .filter((f) => f.path.toLowerCase().includes(q) || f.basename.toLowerCase().includes(q))
+      .sort((a, b) => {
+        if (!q && activeFilePath) {
+          if (a.path === activeFilePath && b.path !== activeFilePath) return -1;
+          if (b.path === activeFilePath && a.path !== activeFilePath) return 1;
+        }
+        return 0;
+      })
       .slice(0, 10)
       .map((f) => ({
         type: "file" as const,
