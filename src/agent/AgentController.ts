@@ -33,6 +33,13 @@ interface ToolUseBlock {
 
 type ContentBlock = TextBlock | ToolUseBlock;
 
+export interface UsageSample {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 // Classify an error to determine if retry is appropriate.
 export function classifyError(error: Error): ErrorType {
   const msg = error.message.toLowerCase();
@@ -80,6 +87,7 @@ export class AgentController {
   private streamingAccumulator = new StreamingAccumulator();
   private pendingToolEdits: Map<string, { filePath: string; diff: string; backupPath?: string }> = new Map();
   private activeConversationId: string | null = null;
+  private lastUsageSample: UsageSample | null = null;
 
   constructor(plugin: ClaudeCodePlugin) {
     this.plugin = plugin;
@@ -100,6 +108,10 @@ export class AgentController {
 
   setActiveConversationId(conversationId: string | null) {
     this.activeConversationId = conversationId;
+  }
+
+  getLastUsageSample(): UsageSample | null {
+    return this.lastUsageSample;
   }
 
   // Send a message with automatic retry for transient errors.
@@ -149,6 +161,7 @@ export class AgentController {
     this.currentToolCalls = toolCalls;  // Store reference for subagent matching.
     let finalContent = "";
     let messageId = this.generateId();
+    this.lastUsageSample = null;
 
     try {
       // Build environment with API key and base URL if set in settings.
@@ -220,6 +233,7 @@ export class AgentController {
           maxBudgetUsd: this.plugin.settings.maxBudgetPerSession,
 
           maxTurns: this.plugin.settings.maxTurns,
+          permissionMode: this.plugin.settings.permissionMode,
 
           // Resume session if available.
           resume: this.sessionId ?? undefined,
@@ -283,6 +297,41 @@ export class AgentController {
           const resultMsg = message as SDKResultMessage;
           if (resultMsg.subtype === "success") {
             logger.info("AgentController", `Query completed: ${resultMsg.num_turns} turns, $${resultMsg.total_cost_usd.toFixed(4)}`);
+            const usage = resultMsg.usage as any;
+            const inputTokens = Number(
+              usage?.inputTokens ??
+              usage?.input_tokens ??
+              0
+            );
+            const outputTokens = Number(
+              usage?.outputTokens ??
+              usage?.output_tokens ??
+              0
+            );
+            const cacheReadInputTokens = Number(
+              usage?.cacheReadInputTokens ??
+              usage?.cache_read_input_tokens ??
+              0
+            );
+            const cacheCreationInputTokens = Number(
+              usage?.cacheCreationInputTokens ??
+              usage?.cache_creation_input_tokens ??
+              0
+            );
+            const totalTokens =
+              inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens;
+            this.lastUsageSample = {
+              costUsd: resultMsg.total_cost_usd || 0,
+              inputTokens,
+              outputTokens,
+              totalTokens,
+            };
+            void this.plugin.recordUsageEvent({
+              timestamp: Date.now(),
+              costUsd: this.lastUsageSample.costUsd,
+              inputTokens: this.lastUsageSample.inputTokens,
+              outputTokens: this.lastUsageSample.outputTokens,
+            });
             // Final result text may be in resultMsg.result.
             if (resultMsg.result && !finalContent) {
               finalContent = resultMsg.result;
@@ -500,7 +549,22 @@ export class AgentController {
     toolName: string,
     input: any
   ): Promise<{ behavior: "allow"; updatedInput: any } | { behavior: "deny"; message: string }> {
-    // Auto-approve read-only operations.
+    const permissionMode = this.plugin.settings.permissionMode;
+
+    if (permissionMode === "bypassPermissions") {
+      return { behavior: "allow", updatedInput: input };
+    }
+
+    if (permissionMode === "plan") {
+      return { behavior: "deny", message: "Plan mode is enabled. Tool execution is disabled." };
+    }
+
+    // Check if tool is in the always-allowed list (persistent setting).
+    if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) {
+      return { behavior: "allow", updatedInput: input };
+    }
+
+    // Read-only operations can be auto-approved based on settings.
     const readOnlyTools = [
       "Read",
       "Glob",
@@ -513,7 +577,19 @@ export class AgentController {
     ];
 
     if (readOnlyTools.includes(toolName)) {
-      return { behavior: "allow", updatedInput: input };
+      if (this.plugin.settings.autoApproveVaultReads) {
+        return { behavior: "allow", updatedInput: input };
+      }
+      if (this.approvedTools.has(toolName)) {
+        return { behavior: "allow", updatedInput: input };
+      }
+
+      const result = await this.showPermissionModal(toolName, input, "low");
+      if (result.approved) {
+        await this.handlePermissionChoice(toolName, result.choice);
+        return { behavior: "allow", updatedInput: input };
+      }
+      return { behavior: "deny", message: "User denied file read permission" };
     }
 
     // Auto-approve Obsidian UI tools (safe operations).
@@ -529,16 +605,13 @@ export class AgentController {
       return { behavior: "allow", updatedInput: input };
     }
 
-    // Check if tool is in the always-allowed list (persistent setting).
-    if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) {
-      return { behavior: "allow", updatedInput: input };
-    }
-
     // Check settings for file write operations.
     const writeTools = ["Write", "Edit", "MultiEdit"];
     if (writeTools.includes(toolName)) {
+      const autoApproveWrites =
+        permissionMode === "acceptEdits" || this.plugin.settings.autoApproveVaultWrites;
       const shouldReviewDiff =
-        this.plugin.settings.reviewEditsWithDiff || !this.plugin.settings.autoApproveVaultWrites;
+        this.plugin.settings.reviewEditsWithDiff || !autoApproveWrites;
 
       if (shouldReviewDiff) {
         const diffResult = await this.buildDiffForTool(toolName, input);
@@ -560,7 +633,7 @@ export class AgentController {
         }
       }
 
-      if (this.plugin.settings.autoApproveVaultWrites) {
+      if (autoApproveWrites) {
         const diffResult = await this.buildDiffForTool(toolName, input);
         if (diffResult?.backupPath) {
           const key = this.buildToolEditKey(toolName, input);

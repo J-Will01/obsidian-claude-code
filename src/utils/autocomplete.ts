@@ -58,6 +58,62 @@ export const SLASH_COMMANDS: Suggestion[] = [
     description: "Show current context",
     icon: "info",
   },
+  {
+    type: "command",
+    value: "/status",
+    label: "/status",
+    description: "Show session status",
+    icon: "activity",
+  },
+  {
+    type: "command",
+    value: "/cost",
+    label: "/cost",
+    description: "Show conversation token and cost usage",
+    icon: "wallet",
+  },
+  {
+    type: "command",
+    value: "/usage",
+    label: "/usage",
+    description: "Show Claude plan usage (5-hour and 7-day)",
+    icon: "bar-chart-2",
+  },
+  {
+    type: "command",
+    value: "/model",
+    label: "/model [name]",
+    description: "Show or change the active model",
+    icon: "cpu",
+  },
+  {
+    type: "command",
+    value: "/permissions",
+    label: "/permissions",
+    description: "Show permission settings",
+    icon: "shield",
+  },
+  {
+    type: "command",
+    value: "/mcp",
+    label: "/mcp",
+    description: "Show MCP server status",
+    icon: "plug",
+  },
+  {
+    type: "command",
+    value: "/rewind",
+    label: "/rewind",
+    description: "Restore most recent backup",
+    icon: "rotate-ccw",
+  },
+  {
+    type: "command",
+    value: "/checkpoint",
+    label: "/checkpoint",
+    description: "List rewind checkpoints",
+    icon: "history",
+  },
 ];
 
 /**

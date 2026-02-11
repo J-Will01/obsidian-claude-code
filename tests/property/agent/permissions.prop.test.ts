@@ -27,25 +27,32 @@ const writeTools = ["Write", "Edit", "MultiEdit"];
 function shouldAutoApprove(
   toolName: string,
   settings: {
+    autoApproveVaultReads: boolean;
     autoApproveVaultWrites: boolean;
     requireBashApproval: boolean;
     alwaysAllowedTools: string[];
   },
   sessionApprovedTools: Set<string>
 ): { autoApprove: boolean; reason: string } {
-  // Read-only tools are always approved.
+  // Check always-allowed list first.
+  if (settings.alwaysAllowedTools.includes(toolName)) {
+    return { autoApprove: true, reason: "always-allowed" };
+  }
+
+  // Read-only tools follow read auto-approval settings.
   if (readOnlyTools.includes(toolName)) {
-    return { autoApprove: true, reason: "read-only" };
+    if (settings.autoApproveVaultReads) {
+      return { autoApprove: true, reason: "auto-approve-reads" };
+    }
+    if (sessionApprovedTools.has(toolName)) {
+      return { autoApprove: true, reason: "session-approved" };
+    }
+    return { autoApprove: false, reason: "requires-read-approval" };
   }
 
   // Obsidian UI tools are safe.
   if (obsidianUiTools.includes(toolName)) {
     return { autoApprove: true, reason: "obsidian-ui" };
-  }
-
-  // Check always-allowed list.
-  if (settings.alwaysAllowedTools.includes(toolName)) {
-    return { autoApprove: true, reason: "always-allowed" };
   }
 
   // Write tools check settings.
@@ -81,25 +88,46 @@ function shouldAutoApprove(
 
 describe("permission handling property tests", () => {
   describe("read-only tools", () => {
-    it("should always auto-approve read-only tools regardless of settings", () => {
+    it("should respect autoApproveVaultReads for read-only tools", () => {
       fc.assert(
         fc.property(
           fc.constantFrom(...readOnlyTools),
           fc.boolean(),
           fc.boolean(),
+          fc.boolean(),
           fc.array(fc.string()),
-          (toolName, autoApproveWrites, requireBash, alwaysAllowed) => {
+          (toolName, autoApproveReads, autoApproveWrites, requireBash, alwaysAllowed) => {
             const settings = {
+              autoApproveVaultReads: autoApproveReads,
               autoApproveVaultWrites: autoApproveWrites,
               requireBashApproval: requireBash,
               alwaysAllowedTools: alwaysAllowed,
             };
             const result = shouldAutoApprove(toolName, settings, new Set());
-            expect(result.autoApprove).toBe(true);
-            expect(result.reason).toBe("read-only");
+            const expected = autoApproveReads || alwaysAllowed.includes(toolName);
+            expect(result.autoApprove).toBe(expected);
           }
         ),
         { numRuns: 100 }
+      );
+    });
+
+    it("should respect session approvals for read-only tools", () => {
+      fc.assert(
+        fc.property(fc.constantFrom(...readOnlyTools), (toolName) => {
+          const settings = {
+            autoApproveVaultReads: false,
+            autoApproveVaultWrites: false,
+            requireBashApproval: true,
+            alwaysAllowedTools: [],
+          };
+          const sessionApproved = new Set<string>([toolName]);
+          const result = shouldAutoApprove(toolName, settings, sessionApproved);
+
+          expect(result.autoApprove).toBe(true);
+          expect(result.reason).toBe("session-approved");
+        }),
+        { numRuns: 30 }
       );
     });
   });
@@ -111,9 +139,11 @@ describe("permission handling property tests", () => {
           fc.constantFrom(...obsidianUiTools),
           fc.boolean(),
           fc.boolean(),
+          fc.boolean(),
           fc.array(fc.string()),
-          (toolName, autoApproveWrites, requireBash, alwaysAllowed) => {
+          (toolName, autoApproveReads, autoApproveWrites, requireBash, alwaysAllowed) => {
             const settings = {
+              autoApproveVaultReads: autoApproveReads,
               autoApproveVaultWrites: autoApproveWrites,
               requireBashApproval: requireBash,
               alwaysAllowedTools: alwaysAllowed,
@@ -134,8 +164,10 @@ describe("permission handling property tests", () => {
         fc.property(
           fc.constantFrom(...writeTools),
           fc.boolean(),
-          (toolName, autoApproveWrites) => {
+          fc.boolean(),
+          (toolName, autoApproveReads, autoApproveWrites) => {
             const settings = {
+              autoApproveVaultReads: autoApproveReads,
               autoApproveVaultWrites: autoApproveWrites,
               requireBashApproval: true,
               alwaysAllowedTools: [],
@@ -159,6 +191,7 @@ describe("permission handling property tests", () => {
       fc.assert(
         fc.property(fc.constantFrom(...writeTools), (toolName) => {
           const settings = {
+            autoApproveVaultReads: false,
             autoApproveVaultWrites: false,
             requireBashApproval: true,
             alwaysAllowedTools: [],
@@ -179,6 +212,7 @@ describe("permission handling property tests", () => {
       fc.assert(
         fc.property(fc.boolean(), (requireBashApproval) => {
           const settings = {
+            autoApproveVaultReads: false,
             autoApproveVaultWrites: false,
             requireBashApproval,
             alwaysAllowedTools: [],
@@ -199,6 +233,7 @@ describe("permission handling property tests", () => {
 
     it("should respect session approvals for Bash", () => {
       const settings = {
+        autoApproveVaultReads: false,
         autoApproveVaultWrites: false,
         requireBashApproval: true,
         alwaysAllowedTools: [],
@@ -226,6 +261,7 @@ describe("permission handling property tests", () => {
             }
 
             const settings = {
+              autoApproveVaultReads: false,
               autoApproveVaultWrites: false,
               requireBashApproval: true,
               alwaysAllowedTools: [toolName],
@@ -247,9 +283,11 @@ describe("permission handling property tests", () => {
         fc.property(
           fc.boolean(),
           fc.boolean(),
+          fc.boolean(),
           fc.array(fc.string()),
-          (autoApproveWrites, requireBash, alwaysAllowed) => {
+          (autoApproveReads, autoApproveWrites, requireBash, alwaysAllowed) => {
             const settings = {
+              autoApproveVaultReads: autoApproveReads,
               autoApproveVaultWrites: autoApproveWrites,
               requireBashApproval: requireBash,
               alwaysAllowedTools: alwaysAllowed,
@@ -268,6 +306,7 @@ describe("permission handling property tests", () => {
   describe("priority of rules", () => {
     it("should check always-allowed before write tools settings", () => {
       const settings = {
+        autoApproveVaultReads: false,
         autoApproveVaultWrites: false,
         requireBashApproval: true,
         alwaysAllowedTools: ["Write"],
@@ -280,6 +319,7 @@ describe("permission handling property tests", () => {
 
     it("should check always-allowed before Bash settings", () => {
       const settings = {
+        autoApproveVaultReads: false,
         autoApproveVaultWrites: false,
         requireBashApproval: true,
         alwaysAllowedTools: ["Bash"],
@@ -298,10 +338,12 @@ describe("permission handling property tests", () => {
           fc.string({ minLength: 1, maxLength: 30 }),
           fc.boolean(),
           fc.boolean(),
+          fc.boolean(),
           fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
           fc.array(fc.string({ maxLength: 20 }), { maxLength: 5 }),
-          (toolName, autoApprove, requireBash, alwaysAllowed, sessionApproved) => {
+          (toolName, autoApproveReads, autoApprove, requireBash, alwaysAllowed, sessionApproved) => {
             const settings = {
+              autoApproveVaultReads: autoApproveReads,
               autoApproveVaultWrites: autoApprove,
               requireBashApproval: requireBash,
               alwaysAllowedTools: alwaysAllowed,

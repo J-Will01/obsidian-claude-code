@@ -297,6 +297,23 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Permission mode")
+      .setDesc("SDK-level permission behavior")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("default", "Default (prompt as needed)")
+          .addOption("acceptEdits", "Accept Edits (auto-approve file edits)")
+          .addOption("plan", "Plan (disable tool execution)")
+          .addOption("bypassPermissions", "Bypass (allow all tools)")
+          .setValue(this.plugin.settings.permissionMode || "default")
+          .onChange(async (value) => {
+            this.plugin.settings.permissionMode =
+              value as "default" | "acceptEdits" | "plan" | "bypassPermissions";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName("Show project controls panel")
       .setDesc("Display model, budget, skills, and context controls above chat")
       .addToggle((toggle) =>
@@ -322,6 +339,53 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName("5-hour usage budget (USD)")
+      .setDesc("Budget used for the rolling 5-hour usage bar in the chat header")
+      .addText((text) =>
+        text
+          .setPlaceholder("10.00")
+          .setValue(String(this.plugin.settings.fiveHourUsageBudgetUsd))
+          .onChange(async (value) => {
+            const parsed = parseFloat(value);
+            if (!isNaN(parsed) && parsed > 0) {
+              this.plugin.settings.fiveHourUsageBudgetUsd = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Header usage bar source")
+      .setDesc("Controls what the top usage bar displays. 'Auto' uses plan usage when available, otherwise falls back to local spend vs budget.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("auto", "Auto (plan usage if available)")
+          .addOption("budget", "Local spend vs budget")
+          .addOption("claudeAi", "Claude plan usage (experimental)")
+          .setValue(this.plugin.settings.usageTelemetrySource || "auto")
+          .onChange(async (value) => {
+            this.plugin.settings.usageTelemetrySource = value as "auto" | "budget" | "claudeAi";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Weekly usage alert threshold (%)")
+      .setDesc("Show 7-day plan usage in the header when utilization meets or exceeds this threshold.")
+      .addText((text) =>
+        text
+          .setPlaceholder("80")
+          .setValue(String(this.plugin.settings.weeklyUsageAlertThresholdPercent ?? 80))
+          .onChange(async (value) => {
+            const parsed = parseInt(value, 10);
+            if (!isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+              this.plugin.settings.weeklyUsageAlertThresholdPercent = parsed;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
     // MCP servers section.
     containerEl.createEl("h3", { text: "MCP Servers (Advanced)" });
 
@@ -331,14 +395,26 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
     });
 
     const mcpList = containerEl.createDiv({ cls: "claude-code-mcp-list" });
-    for (const server of this.plugin.settings.additionalMcpServers) {
+    this.plugin.settings.additionalMcpServers.forEach((server, index) => {
       const item = mcpList.createDiv({ cls: "claude-code-mcp-item" });
       item.createSpan({ text: server.name });
       const status = item.createSpan({ cls: "claude-code-mcp-status" });
       const approved = this.plugin.settings.approvedMcpServers.includes(server.name);
       status.setText(server.enabled ? (approved ? "enabled" : "needs approval") : "disabled");
-      const toggle = item.createEl("button", { text: approved ? "Revoke" : "Approve" });
-      toggle.addEventListener("click", async () => {
+
+      const actions = item.createSpan({ cls: "claude-code-mcp-actions" });
+
+      const enableToggle = actions.createEl("button", {
+        text: server.enabled ? "Disable" : "Enable",
+      });
+      enableToggle.addEventListener("click", async () => {
+        this.plugin.settings.additionalMcpServers[index].enabled = !this.plugin.settings.additionalMcpServers[index].enabled;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+
+      const approvalToggle = actions.createEl("button", { text: approved ? "Revoke" : "Approve" });
+      approvalToggle.addEventListener("click", async () => {
         if (approved) {
           this.plugin.settings.approvedMcpServers = this.plugin.settings.approvedMcpServers.filter(
             (name) => name !== server.name
@@ -349,7 +425,18 @@ export class ClaudeCodeSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.display();
       });
-    }
+
+      const removeBtn = actions.createEl("button", { text: "Remove" });
+      removeBtn.addEventListener("click", async () => {
+        const serverName = this.plugin.settings.additionalMcpServers[index].name;
+        this.plugin.settings.additionalMcpServers.splice(index, 1);
+        this.plugin.settings.approvedMcpServers = this.plugin.settings.approvedMcpServers.filter(
+          (name) => name !== serverName
+        );
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    });
 
     new Setting(containerEl)
       .setName("Additional MCP servers JSON")

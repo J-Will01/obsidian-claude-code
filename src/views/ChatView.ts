@@ -9,10 +9,12 @@ import { ConversationHistoryModal } from "./ConversationHistoryModal";
 import { logger } from "../utils/Logger";
 import { ProjectControls } from "./components/ProjectControls";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
+import { revertFromBackup } from "../utils/DiffEngine";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
   private headerEl!: HTMLElement;
+  private telemetryEl: HTMLElement | null = null;
   private messagesContainerEl!: HTMLElement;
   private inputContainerEl!: HTMLElement;
   private messageList!: MessageList;
@@ -27,6 +29,7 @@ export class ChatView extends ItemView {
   private isCancelling = false;  // Flag to suppress error display during intentional cancel.
   private activeStreamConversationId: string | null = null;  // Track which conversation owns the active stream.
   private lastUserMessage: string | null = null;  // Store last message for retry functionality.
+  private telemetryIntervalId: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -129,6 +132,10 @@ export class ChatView extends ItemView {
   async onClose() {
     // Cancel any streaming.
     this.agentController.cancelStream();
+    if (this.telemetryIntervalId !== null) {
+      window.clearInterval(this.telemetryIntervalId);
+      this.telemetryIntervalId = null;
+    }
   }
 
   private renderView() {
@@ -139,6 +146,7 @@ export class ChatView extends ItemView {
     }
 
     this.renderHeader();
+    this.renderTelemetryBars();
     this.renderMessagesArea();
     this.renderInputArea();
   }
@@ -194,6 +202,13 @@ export class ChatView extends ItemView {
     const historyButton = actionsEl.createEl("button", { attr: { "aria-label": "History" } });
     setIcon(historyButton, "history");
     historyButton.addEventListener("click", () => this.showHistory());
+
+    // Checkpoint/rewind button.
+    const checkpointButton = actionsEl.createEl("button", {
+      attr: { "aria-label": "Checkpoints and Rewind" },
+    });
+    setIcon(checkpointButton, "rotate-ccw");
+    checkpointButton.addEventListener("click", (e) => this.showCheckpointMenu(e as MouseEvent));
 
     // Settings button.
     const settingsButton = actionsEl.createEl("button", { attr: { "aria-label": "Settings" } });
@@ -355,10 +370,176 @@ export class ChatView extends ItemView {
       const conv = this.conversationManager.getCurrentConversation();
       titleEl.textContent = conv?.title || "New Conversation";
     }
+    this.updateTelemetryBars();
   }
 
   private refreshProjectControls() {
     this.projectControls?.render();
+    this.updateTelemetryBars();
+  }
+
+  private renderTelemetryBars() {
+    this.telemetryEl?.remove();
+    this.telemetryEl = this.contentEl.createDiv({ cls: "claude-code-telemetry-bars" });
+
+    const usageRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
+    const usageLabel = usageRow.createDiv({ cls: "claude-code-telemetry-label" });
+    usageLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "5h Usage" });
+    usageLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "" });
+    const usageTrack = usageRow.createDiv({ cls: "claude-code-telemetry-track" });
+    usageTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-usage-fill" });
+    usageRow.createDiv({ cls: "claude-code-telemetry-value claude-code-usage-value" });
+
+    const weeklyRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row claude-code-weekly-row" });
+    weeklyRow.style.display = "none";
+    const weeklyLabel = weeklyRow.createDiv({ cls: "claude-code-telemetry-label" });
+    weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "7d Usage" });
+    weeklyLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "" });
+    const weeklyTrack = weeklyRow.createDiv({ cls: "claude-code-telemetry-track" });
+    weeklyTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-weekly-fill" });
+    weeklyRow.createDiv({ cls: "claude-code-telemetry-value claude-code-weekly-value" });
+
+    const contextRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-row" });
+    const contextLabel = contextRow.createDiv({ cls: "claude-code-telemetry-label" });
+    contextLabel.createDiv({ cls: "claude-code-telemetry-label-title", text: "Context" });
+    contextLabel.createDiv({ cls: "claude-code-telemetry-label-subtitle", text: "(est.)" });
+    const contextTrack = contextRow.createDiv({ cls: "claude-code-telemetry-track" });
+    contextTrack.createDiv({ cls: "claude-code-telemetry-fill claude-code-context-fill" });
+    contextRow.createDiv({ cls: "claude-code-telemetry-value claude-code-context-value" });
+
+    const metaRow = this.telemetryEl.createDiv({ cls: "claude-code-telemetry-meta" });
+    metaRow.createDiv({ cls: "claude-code-telemetry-last-updated", text: "Last updated: --" });
+    const refreshBtn = metaRow.createEl("button", { cls: "claude-code-telemetry-refresh", attr: { "aria-label": "Refresh usage" } });
+    setIcon(refreshBtn, "refresh-cw");
+    refreshBtn.addEventListener("click", () => {
+      void this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true }).then(() => this.updateTelemetryBars());
+    });
+
+    this.updateTelemetryBars();
+    if (this.telemetryIntervalId !== null) {
+      window.clearInterval(this.telemetryIntervalId);
+    }
+    this.telemetryIntervalId = window.setInterval(() => this.updateTelemetryBars(), 30000);
+  }
+
+  private getModelContextWindow(model: string): number {
+    switch ((model || "").toLowerCase()) {
+      case "haiku":
+      case "opus":
+      case "sonnet":
+      default:
+        return 200000;
+    }
+  }
+
+  private updateTelemetryBars() {
+    if (!this.telemetryEl) return;
+
+    const usageFill = this.telemetryEl.querySelector(".claude-code-usage-fill") as HTMLElement | null;
+    const usageValue = this.telemetryEl.querySelector(".claude-code-usage-value") as HTMLElement | null;
+    const usageSubtitle = this.telemetryEl.querySelector(".claude-code-telemetry-row .claude-code-telemetry-label-subtitle") as HTMLElement | null;
+    const weeklyRow = this.telemetryEl.querySelector(".claude-code-weekly-row") as HTMLElement | null;
+    const weeklyFill = this.telemetryEl.querySelector(".claude-code-weekly-fill") as HTMLElement | null;
+    const weeklyValue = this.telemetryEl.querySelector(".claude-code-weekly-value") as HTMLElement | null;
+    const weeklySubtitle = weeklyRow?.querySelector(".claude-code-telemetry-label-subtitle") as HTMLElement | null;
+    const contextFill = this.telemetryEl.querySelector(".claude-code-context-fill") as HTMLElement | null;
+    const contextValue = this.telemetryEl.querySelector(".claude-code-context-value") as HTMLElement | null;
+    const lastUpdatedEl = this.telemetryEl.querySelector(".claude-code-telemetry-last-updated") as HTMLElement | null;
+    if (!usageFill || !usageValue || !weeklyRow || !weeklyFill || !weeklyValue || !contextFill || !contextValue || !lastUpdatedEl) return;
+
+    const source = this.plugin.settings.usageTelemetrySource || "auto";
+    if (source !== "budget") {
+      void this.plugin.refreshClaudeAiPlanUsageIfStale(30000).then((updated) => {
+        if (updated) {
+          this.updateTelemetryBars();
+        }
+      });
+    }
+
+    const snapshot = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const usePlanUsage = (source === "claudeAi" || source === "auto") && !!snapshot;
+
+    const formatResetTime = (iso?: string) => {
+      if (!iso) return null;
+      const dt = new Date(iso);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    };
+
+    const formatResetsIn = (iso?: string) => {
+      if (!iso) return null;
+      const dt = new Date(iso);
+      if (Number.isNaN(dt.getTime())) return null;
+      const deltaMs = dt.getTime() - Date.now();
+      if (deltaMs <= 0) return "Resets soon";
+      const mins = Math.max(0, Math.round(deltaMs / 60000));
+      if (mins < 60) return `Resets in ${mins} min`;
+      const hrs = Math.floor(mins / 60);
+      const rem = mins % 60;
+      return rem === 0 ? `Resets in ${hrs} hr` : `Resets in ${hrs} hr ${rem} min`;
+    };
+
+    const formatLastUpdated = (ms?: number) => {
+      if (!ms || !Number.isFinite(ms)) return "--";
+      const delta = Date.now() - ms;
+      if (delta < 5000) return "just now";
+      const secs = Math.round(delta / 1000);
+      if (secs < 60) return `${secs}s ago`;
+      const mins = Math.round(secs / 60);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.round(mins / 60);
+      return `${hrs}h ago`;
+    };
+
+    if (usePlanUsage && snapshot) {
+      const usagePercent = Math.max(0, Math.min(100, snapshot.fiveHourUtilizationPercent));
+      usageFill.style.width = `${usagePercent}%`;
+      usageValue.setText(`${usagePercent.toFixed(0)}% used`);
+      const resetsIn = formatResetsIn(snapshot.fiveHourResetsAt);
+      if (usageSubtitle) usageSubtitle.setText(resetsIn ?? "");
+
+      const threshold = Math.max(0, Math.min(100, this.plugin.settings.weeklyUsageAlertThresholdPercent ?? 80));
+      const weeklyPercent = snapshot.sevenDayUtilizationPercent;
+      const showWeekly = Number.isFinite(weeklyPercent) && (weeklyPercent as number) >= threshold;
+      weeklyRow.style.display = showWeekly ? "" : "none";
+      if (showWeekly && typeof weeklyPercent === "number") {
+        const clamped = Math.max(0, Math.min(100, weeklyPercent));
+        weeklyFill.style.width = `${clamped}%`;
+        weeklyValue.setText(`${clamped.toFixed(0)}% used`);
+        const weeklyReset = formatResetTime(snapshot.sevenDayResetsAt);
+        if (weeklySubtitle) weeklySubtitle.setText(weeklyReset ? `Resets ${weeklyReset}` : "");
+      }
+      lastUpdatedEl.setText(`Last updated: ${formatLastUpdated(snapshot.fetchedAt)}`);
+    } else {
+      weeklyRow.style.display = "none";
+      if (source === "claudeAi") {
+        usageFill.style.width = `0%`;
+        usageValue.setText("Unavailable");
+        const err = this.plugin.getClaudeAiPlanUsageError();
+        if (usageSubtitle) usageSubtitle.setText(err ? "Check /status for error" : "");
+        lastUpdatedEl.setText("Last updated: --");
+      } else {
+        const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
+        const rolling = this.plugin.getRollingUsageSummary(5);
+        const usagePercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+        usageFill.style.width = `${usagePercent}%`;
+        usageValue.setText(
+          `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)} (${usagePercent.toFixed(0)}%)`
+        );
+        if (usageSubtitle) usageSubtitle.setText("");
+        lastUpdatedEl.setText("Last updated: --");
+      }
+    }
+
+    const conv = this.conversationManager.getCurrentConversation();
+    const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
+    // Prefer totalTokens since it includes cache-related tokens; inputTokens can be 0 for cache-heavy sessions.
+    const usedTokens = Math.max(0, conv?.metadata?.totalTokens ?? 0, conv?.metadata?.inputTokens ?? 0);
+    const contextPercent = Math.min(100, (usedTokens / contextWindow) * 100);
+    contextFill.style.width = `${contextPercent}%`;
+    contextValue.setText(
+      `${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${contextPercent.toFixed(0)}%)`
+    );
   }
 
   private renderMessagesArea() {
@@ -372,6 +553,9 @@ export class ChatView extends ItemView {
         conversationManager: this.conversationManager,
         onResetSession: () => this.resetSession(),
         onOpenLogs: () => this.openLogs(),
+        onRewindLatest: () => {
+          void this.handleRewindCommand();
+        },
       });
       this.projectControls.render();
     }
@@ -405,9 +589,348 @@ export class ChatView extends ItemView {
     this.chatInput = new ChatInput(this.inputContainerEl, {
       onSend: (message) => this.handleSendMessage(message),
       onCancel: () => this.handleCancelStreaming(),
+      onCommand: (command, args) => {
+        void this.handleInputCommand(command, args);
+      },
       isStreaming: () => this.isStreaming,
       plugin: this.plugin,
     });
+  }
+
+  private async handleInputCommand(command: string, args: string[] = []) {
+    logger.debug("ChatView", "Handling input command", { command, args });
+    switch (command) {
+      case "new":
+      case "clear":
+        await this.startNewConversation();
+        break;
+      case "status":
+        await this.showStatusMessage();
+        break;
+      case "cost":
+        await this.showCostMessage();
+        break;
+      case "usage":
+        await this.showUsageMessage();
+        break;
+      case "model":
+        await this.handleModelCommand(args);
+        break;
+      case "permissions":
+        await this.showPermissionsMessage();
+        break;
+      case "mcp":
+        await this.showMcpMessage();
+        break;
+      case "rewind":
+        await this.handleRewindCommand();
+        break;
+      case "checkpoint":
+        await this.handleCheckpointCommand();
+        break;
+      default:
+        break;
+    }
+  }
+
+  private formatUsageTime(iso?: string) {
+    if (!iso) return "unknown";
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return "unknown";
+    return dt.toLocaleString();
+  }
+
+  private async showStatusMessage() {
+    const conv = this.conversationManager.getCurrentConversation();
+    const auth = this.plugin.getAuthStatus();
+    const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const planErr = this.plugin.getClaudeAiPlanUsageError();
+    const activeMcpServers = this.plugin.settings.additionalMcpServers
+      .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
+      .map((server) => server.name);
+
+    const lines = [
+      `- Model: \`${this.plugin.settings.model}\``,
+      `- Permission mode: \`${this.plugin.settings.permissionMode}\``,
+      `- Max turns: \`${this.plugin.settings.maxTurns}\``,
+      `- Budget: \`$${this.plugin.settings.maxBudgetPerSession.toFixed(2)}\``,
+      `- Auth: \`${auth.label}\``,
+      `- Conversation: \`${conv?.title || "New Conversation"}\``,
+      `- Session ID: \`${this.agentController.getSessionId() || "none"}\``,
+      `- Total tokens: \`${conv?.metadata?.totalTokens ?? 0}\``,
+      `- Total cost: \`$${(conv?.metadata?.totalCostUsd ?? 0).toFixed(4)}\``,
+      `- Usage bar source: \`${this.plugin.settings.usageTelemetrySource || "auto"}\``,
+      `- Claude plan usage (cached): \`${plan ? "available" : "unavailable"}\``,
+      plan
+        ? `  - 5h: \`${plan.fiveHourUtilizationPercent.toFixed(0)}%\` (resets \`${this.formatUsageTime(plan.fiveHourResetsAt)}\`)`
+        : "",
+      plan && Number.isFinite(plan.sevenDayUtilizationPercent)
+        ? `  - 7d: \`${(plan.sevenDayUtilizationPercent ?? 0).toFixed(0)}%\` (resets \`${this.formatUsageTime(plan.sevenDayResetsAt)}\`)`
+        : "",
+      planErr ? `  - Last plan usage error: \`${planErr}\`` : "",
+      `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
+    ].filter(Boolean);
+
+    await this.appendLocalAssistantMessage("Session Status", lines.join("\n"));
+  }
+
+  private async showUsageMessage() {
+    await this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true });
+    const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const planErr = this.plugin.getClaudeAiPlanUsageError();
+
+    if (!plan) {
+      const lines = [
+        "- Claude plan usage: `unavailable`",
+        planErr ? `- Last error: \`${planErr}\`` : "- Last error: `none`",
+      ];
+      await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+      return;
+    }
+
+    const lines = [
+      `- Current session (5h): \`${plan.fiveHourUtilizationPercent.toFixed(0)}%\` used`,
+      `  - Resets at: \`${this.formatUsageTime(plan.fiveHourResetsAt)}\``,
+      Number.isFinite(plan.sevenDayUtilizationPercent)
+        ? `- Weekly limits (7d): \`${(plan.sevenDayUtilizationPercent ?? 0).toFixed(0)}%\` used`
+        : "- Weekly limits (7d): `unknown`",
+      plan.sevenDayResetsAt ? `  - Resets at: \`${this.formatUsageTime(plan.sevenDayResetsAt)}\`` : "",
+      `- Last updated: \`${new Date(plan.fetchedAt).toLocaleString()}\``,
+    ].filter(Boolean);
+
+    await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+  }
+
+  private async showCostMessage() {
+    const conv = this.conversationManager.getCurrentConversation();
+    const totalTokens = conv?.metadata?.totalTokens ?? 0;
+    const totalCost = conv?.metadata?.totalCostUsd ?? 0;
+    const lines = [
+      `- Conversation: \`${conv?.title || "New Conversation"}\``,
+      `- Total tokens: \`${totalTokens}\``,
+      `- Total cost: \`$${totalCost.toFixed(4)}\``,
+    ];
+    await this.appendLocalAssistantMessage("Usage", lines.join("\n"));
+  }
+
+  private async handleModelCommand(args: string[]) {
+    const supportedModels = ["sonnet", "opus", "haiku"];
+    const requestedModel = args[0]?.toLowerCase();
+
+    if (!requestedModel) {
+      const lines = [
+        `- Current model: \`${this.plugin.settings.model}\``,
+        `- Available models: \`${supportedModels.join(", ")}\``,
+        "- Usage: `/model sonnet`",
+      ];
+      await this.appendLocalAssistantMessage("Model", lines.join("\n"));
+      return;
+    }
+
+    if (!supportedModels.includes(requestedModel)) {
+      await this.appendLocalAssistantMessage(
+        "Model",
+        `Unknown model \`${requestedModel}\`. Choose one of: \`${supportedModels.join(", ")}\`.`
+      );
+      return;
+    }
+
+    const previous = this.plugin.settings.model;
+    this.plugin.settings.model = requestedModel;
+    await this.plugin.saveSettings();
+    this.refreshProjectControls();
+    await this.appendLocalAssistantMessage(
+      "Model",
+      previous === requestedModel
+        ? `Model is already set to \`${requestedModel}\`.`
+        : `Model changed from \`${previous}\` to \`${requestedModel}\`.`
+    );
+  }
+
+  private async showPermissionsMessage() {
+    const mode = this.plugin.settings.permissionMode;
+    const lines = [
+      `- Permission mode: \`${mode}\``,
+      `- Auto-approve reads: \`${this.plugin.settings.autoApproveVaultReads}\``,
+      `- Auto-approve writes: \`${this.plugin.settings.autoApproveVaultWrites}\``,
+      `- Require Bash approval: \`${this.plugin.settings.requireBashApproval}\``,
+      `- Review edits with diff: \`${this.plugin.settings.reviewEditsWithDiff}\``,
+      `- Always-allowed tools: \`${this.plugin.settings.alwaysAllowedTools.length > 0 ? this.plugin.settings.alwaysAllowedTools.join(", ") : "none"}\``,
+    ];
+
+    if (mode === "plan") {
+      lines.push("- Note: plan mode denies all tool execution.");
+    } else if (mode === "acceptEdits") {
+      lines.push("- Note: acceptEdits mode auto-approves file edits.");
+    } else if (mode === "bypassPermissions") {
+      lines.push("- Note: bypassPermissions mode allows all tools.");
+    }
+
+    await this.appendLocalAssistantMessage("Permission Status", lines.join("\n"));
+  }
+
+  private async showMcpMessage() {
+    const additional = this.plugin.settings.additionalMcpServers;
+    const lines = ["- Built-in: `obsidian` (enabled)"];
+
+    if (additional.length === 0) {
+      lines.push("- Additional servers: `none`");
+    } else {
+      for (const server of additional) {
+        const approved = this.plugin.settings.approvedMcpServers.includes(server.name);
+        const state = !server.enabled ? "disabled" : approved ? "enabled" : "needs approval";
+        lines.push(`- ${server.name}: \`${state}\``);
+      }
+    }
+
+    await this.appendLocalAssistantMessage("MCP Status", lines.join("\n"));
+  }
+
+  private async appendLocalAssistantMessage(title: string, content: string) {
+    const shouldPin = this.isNearBottom();
+    const message: ChatMessage = {
+      id: this.generateId(),
+      role: "assistant",
+      content: `### ${title}\n\n${content}`,
+      timestamp: Date.now(),
+    };
+
+    this.messages.push(message);
+
+    if (this.messagesContainerEl.querySelector(".claude-code-empty-state")) {
+      this.messagesContainerEl.empty();
+      this.messageList = new MessageList(this.messagesContainerEl, this.plugin);
+      this.messageList.render(this.messages);
+    } else {
+      this.messageList.addMessage(message);
+    }
+
+    if (shouldPin) {
+      this.scrollToBottom();
+    }
+
+    try {
+      await this.conversationManager.addMessage(message, {
+        role: "assistant",
+        content: message.content,
+      });
+      (this.leaf as any).updateHeader?.();
+      this.updateConversationDisplay();
+      this.refreshProjectControls();
+    } catch (error) {
+      logger.warn("ChatView", "Failed to persist local assistant message", { error: String(error) });
+    }
+  }
+
+  private getRewindCheckpoints(limit?: number): Array<{ filePath: string; backupPath: string; timestamp: number }> {
+    const checkpoints: Array<{ filePath: string; backupPath: string; timestamp: number }> = [];
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const message = this.messages[i];
+      const toolCalls = message.toolCalls ?? [];
+      for (let j = toolCalls.length - 1; j >= 0; j--) {
+        const toolCall = toolCalls[j];
+        if (toolCall.filePath && toolCall.backupPath) {
+          checkpoints.push({
+            filePath: toolCall.filePath,
+            backupPath: toolCall.backupPath,
+            timestamp: toolCall.startTime || message.timestamp,
+          });
+          if (limit && checkpoints.length >= limit) {
+            return checkpoints;
+          }
+        }
+      }
+    }
+    return checkpoints;
+  }
+
+  private async restoreCheckpoint(
+    checkpoint: { filePath: string; backupPath: string },
+    title = "Rewind"
+  ): Promise<boolean> {
+    try {
+      await revertFromBackup(this.plugin.app.vault, checkpoint.filePath, checkpoint.backupPath);
+      await this.appendLocalAssistantMessage(
+        title,
+        `Restored \`${checkpoint.filePath}\` from backup \`${checkpoint.backupPath}\`.`
+      );
+      return true;
+    } catch (error) {
+      await this.appendLocalAssistantMessage(
+        title,
+        `Failed to restore backup for \`${checkpoint.filePath}\`: ${String(error)}`
+      );
+      return false;
+    }
+  }
+
+  private formatCheckpointTime(timestamp: number): string {
+    const dt = new Date(timestamp);
+    if (Number.isNaN(dt.getTime())) {
+      return "unknown time";
+    }
+    return dt.toLocaleString();
+  }
+
+  private showCheckpointMenu(e: MouseEvent) {
+    const checkpoints = this.getRewindCheckpoints(10);
+    const menu = new Menu();
+
+    menu.addItem((item) => {
+      item.setTitle("Rewind latest edit")
+        .setIcon("rotate-ccw")
+        .setDisabled(checkpoints.length === 0)
+        .onClick(() => {
+          void this.handleRewindCommand();
+        });
+    });
+
+    if (checkpoints.length > 0) {
+      menu.addSeparator();
+      checkpoints.forEach((checkpoint) => {
+        const shortPath = checkpoint.filePath.split("/").pop() || checkpoint.filePath;
+        menu.addItem((item) => {
+          item.setTitle(`${shortPath} (${this.formatCheckpointTime(checkpoint.timestamp)})`)
+            .setIcon("file-text")
+            .onClick(() => {
+              void this.restoreCheckpoint(checkpoint, "Checkpoint Restore");
+            });
+        });
+      });
+    }
+
+    menu.showAtMouseEvent(e);
+  }
+
+  private async handleCheckpointCommand() {
+    const checkpoints = this.getRewindCheckpoints(10);
+    if (checkpoints.length === 0) {
+      await this.appendLocalAssistantMessage(
+        "Checkpoints",
+        "No checkpoints are available yet. Checkpoints appear after Claude makes a file edit."
+      );
+      return;
+    }
+
+    const lines = checkpoints.map((checkpoint, index) =>
+      `${index + 1}. \`${checkpoint.filePath}\` - ${this.formatCheckpointTime(checkpoint.timestamp)}`
+    );
+    lines.push("");
+    lines.push("Use the rewind button in the chat header to restore a specific checkpoint.");
+    await this.appendLocalAssistantMessage("Checkpoints", lines.join("\n"));
+  }
+
+  private async handleRewindCommand() {
+    const latest = this.getRewindCheckpoints(1)[0];
+    if (!latest) {
+      await this.appendLocalAssistantMessage(
+        "Rewind",
+        "No revertible edit was found in this conversation."
+      );
+      return;
+    }
+
+    await this.restoreCheckpoint(latest);
   }
 
   private async handleSendMessage(content: string) {
@@ -492,6 +1015,16 @@ export class ChatView extends ItemView {
       // Save to the conversation that started the stream (may be different from current if user switched).
       if (streamConvId) {
         await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const usageSample = this.agentController.getLastUsageSample();
+        if (usageSample) {
+          await this.conversationManager.updateUsageForConversation(
+            streamConvId,
+            usageSample.totalTokens,
+            usageSample.costUsd,
+            usageSample.inputTokens,
+            usageSample.outputTokens
+          );
+        }
         const sessionId = this.agentController.getSessionId();
         if (sessionId) {
           await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);
@@ -856,6 +1389,16 @@ export class ChatView extends ItemView {
       // Save to the conversation that started the stream.
       if (streamConvId) {
         await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const usageSample = this.agentController.getLastUsageSample();
+        if (usageSample) {
+          await this.conversationManager.updateUsageForConversation(
+            streamConvId,
+            usageSample.totalTokens,
+            usageSample.costUsd,
+            usageSample.inputTokens,
+            usageSample.outputTokens
+          );
+        }
         const sessionId = this.agentController.getSessionId();
         if (sessionId) {
           await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);

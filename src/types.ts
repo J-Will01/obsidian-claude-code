@@ -28,13 +28,25 @@ export interface ClaudeCodeSettings {
   // Limits.
   maxBudgetPerSession: number;
   maxPinnedContextChars: number;
+  fiveHourUsageBudgetUsd: number;
 
   // Agent SDK settings.
   maxTurns: number;
+  permissionMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
   // MCP servers.
   additionalMcpServers: McpServerSetting[];
   approvedMcpServers: string[];
+
+  // Rolling usage telemetry.
+  usageEvents: UsageEvent[];
+
+  // Usage telemetry source for the header usage bar.
+  // - auto: prefer Claude plan utilization (if available), else fall back to local spend budget.
+  // - budget: show local rolling 5-hour spend vs configured budget.
+  // - claudeAi: show Claude plan utilization when available.
+  usageTelemetrySource: "auto" | "budget" | "claudeAi";
+  weeklyUsageAlertThresholdPercent: number;
 }
 
 // Default settings values.
@@ -45,7 +57,7 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   model: "sonnet",
   storeApiKeyInKeychain: false,
   autoApproveVaultReads: true,
-  autoApproveVaultWrites: true,  // Default to auto-approve for better UX.
+  autoApproveVaultWrites: false,
   requireBashApproval: true,
   reviewEditsWithDiff: false,
   alwaysAllowedTools: [],
@@ -53,10 +65,31 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   showProjectControlsPanel: true,
   maxBudgetPerSession: 10.0,
   maxPinnedContextChars: 8000,
+  fiveHourUsageBudgetUsd: 10.0,
   maxTurns: 50,
+  permissionMode: "default",
   additionalMcpServers: [],
   approvedMcpServers: [],
+  usageEvents: [],
+  usageTelemetrySource: "auto",
+  weeklyUsageAlertThresholdPercent: 80,
 };
+
+export interface UsageEvent {
+  timestamp: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface ClaudeAiPlanUsageSnapshot {
+  fetchedAt: number;
+  fiveHourUtilizationPercent: number;
+  fiveHourResetsAt?: string;
+  sevenDayUtilizationPercent?: number;
+  sevenDayResetsAt?: string;
+  extraUsageEnabled?: boolean;
+}
 
 // Error classification for retry and display logic.
 export type ErrorType = "transient" | "auth" | "network" | "permanent";
@@ -134,6 +167,8 @@ export interface Conversation {
   metadata: {
     totalTokens: number;
     totalCostUsd: number;
+    inputTokens?: number;
+    outputTokens?: number;
   };
   pinnedContext?: MessageContext[];
 }

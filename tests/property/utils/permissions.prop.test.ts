@@ -119,28 +119,43 @@ describe("permissions property tests", () => {
 
   describe("shouldAutoApprove", () => {
     const defaultSettings = {
+      autoApproveVaultReads: true,
       autoApproveVaultWrites: false,
       requireBashApproval: true,
       alwaysAllowedTools: [] as string[],
     };
 
-    it("read-only tools should always auto-approve regardless of settings", () => {
+    it("read-only tools should follow autoApproveVaultReads when not always-allowed", () => {
       fc.assert(
         fc.property(
           fc.constantFrom(...READ_ONLY_TOOLS),
           fc.boolean(),
-          fc.boolean(),
-          fc.array(fc.string(), { maxLength: 5 }),
-          (tool, autoWrites, requireBash, allowedTools) => {
+          (tool, autoReads) => {
             const settings = {
-              autoApproveVaultWrites: autoWrites,
-              requireBashApproval: requireBash,
-              alwaysAllowedTools: allowedTools,
+              autoApproveVaultReads: autoReads,
+              autoApproveVaultWrites: false,
+              requireBashApproval: true,
+              alwaysAllowedTools: [],
             };
-            expect(shouldAutoApprove(tool, settings)).toBe(true);
+            expect(shouldAutoApprove(tool, settings)).toBe(autoReads);
           }
         ),
         { numRuns: 50 }
+      );
+    });
+
+    it("always-allowed list should override read auto-approval for read-only tools", () => {
+      fc.assert(
+        fc.property(fc.constantFrom(...READ_ONLY_TOOLS), (tool) => {
+          const settings = {
+            autoApproveVaultReads: false,
+            autoApproveVaultWrites: false,
+            requireBashApproval: true,
+            alwaysAllowedTools: [tool],
+          };
+          expect(shouldAutoApprove(tool, settings)).toBe(true);
+        }),
+        { numRuns: 20 }
       );
     });
 
@@ -150,8 +165,10 @@ describe("permissions property tests", () => {
           fc.constantFrom(...OBSIDIAN_UI_TOOLS),
           fc.boolean(),
           fc.boolean(),
-          (tool, autoWrites, requireBash) => {
+          fc.boolean(),
+          (tool, autoReads, autoWrites, requireBash) => {
             const settings = {
+              autoApproveVaultReads: autoReads,
               autoApproveVaultWrites: autoWrites,
               requireBashApproval: requireBash,
               alwaysAllowedTools: [],
@@ -178,6 +195,7 @@ describe("permissions property tests", () => {
           fc.constantFrom(...WRITE_TOOLS, ...SYSTEM_TOOLS),
           (tool) => {
             const settings = {
+              autoApproveVaultReads: false,
               autoApproveVaultWrites: false,
               requireBashApproval: true,
               alwaysAllowedTools: [tool],

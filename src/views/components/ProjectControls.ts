@@ -10,6 +10,7 @@ type ProjectControlsOptions = {
   conversationManager: ConversationManager;
   onResetSession: () => void;
   onOpenLogs: () => void;
+  onRewindLatest?: () => void;
 };
 
 export class ProjectControls {
@@ -19,6 +20,7 @@ export class ProjectControls {
   private conversationManager: ConversationManager;
   private onResetSession: () => void;
   private onOpenLogs: () => void;
+  private onRewindLatest?: () => void;
 
   constructor(options: ProjectControlsOptions) {
     this.containerEl = options.containerEl;
@@ -27,6 +29,7 @@ export class ProjectControls {
     this.conversationManager = options.conversationManager;
     this.onResetSession = options.onResetSession;
     this.onOpenLogs = options.onOpenLogs;
+    this.onRewindLatest = options.onRewindLatest;
   }
 
   render() {
@@ -73,6 +76,23 @@ export class ProjectControls {
       }
     });
 
+    const permissionRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
+    permissionRow.createSpan({ text: "Permissions" });
+    const permissionSelect = permissionRow.createEl("select");
+    permissionSelect.add(new Option("Default", "default"));
+    permissionSelect.add(new Option("Accept Edits", "acceptEdits"));
+    permissionSelect.add(new Option("Plan", "plan"));
+    permissionSelect.add(new Option("Bypass", "bypassPermissions"));
+    permissionSelect.value = this.plugin.settings.permissionMode || "default";
+    permissionSelect.addEventListener("change", async () => {
+      this.plugin.settings.permissionMode = permissionSelect.value as
+        | "default"
+        | "acceptEdits"
+        | "plan"
+        | "bypassPermissions";
+      await this.plugin.saveSettings();
+    });
+
     const authRow = this.containerEl.createDiv({ cls: "claude-code-project-controls-row" });
     authRow.createSpan({ text: "Auth" });
     const authBadge = authRow.createSpan({ cls: "claude-code-project-controls-badge" });
@@ -98,6 +118,9 @@ export class ProjectControls {
     this.addActionButton(buttons, "file-text", "Add active file", () => this.addActiveFile());
     this.addActionButton(buttons, "mouse-pointer-2", "Add selection", () => this.addSelection());
     this.addActionButton(buttons, "link", "Add backlinks", () => this.addBacklinks());
+    if (this.onRewindLatest) {
+      this.addActionButton(buttons, "rotate-ccw", "Rewind latest edit", this.onRewindLatest);
+    }
     this.addActionButton(buttons, "rotate-ccw", "Reset session", this.onResetSession);
     this.addActionButton(buttons, "file-search", "Open logs", this.onOpenLogs);
 

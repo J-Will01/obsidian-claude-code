@@ -141,14 +141,16 @@ describe("permissions utilities", () => {
 
   describe("shouldAutoApprove", () => {
     const defaultSettings = {
+      autoApproveVaultReads: true,
       autoApproveVaultWrites: false,
       requireBashApproval: true,
       alwaysAllowedTools: [],
     };
 
-    it("should always auto-approve read-only tools", () => {
-      expect(shouldAutoApprove("Read", defaultSettings)).toBe(true);
-      expect(shouldAutoApprove("Glob", defaultSettings)).toBe(true);
+    it("should respect autoApproveVaultReads for read-only tools", () => {
+      expect(shouldAutoApprove("Read", { ...defaultSettings, autoApproveVaultReads: true })).toBe(true);
+      expect(shouldAutoApprove("Read", { ...defaultSettings, autoApproveVaultReads: false })).toBe(false);
+      expect(shouldAutoApprove("Glob", { ...defaultSettings, autoApproveVaultReads: false })).toBe(false);
     });
 
     it("should always auto-approve UI tools", () => {
@@ -158,6 +160,15 @@ describe("permissions utilities", () => {
     it("should respect always-allowed list", () => {
       const settings = { ...defaultSettings, alwaysAllowedTools: ["Bash"] };
       expect(shouldAutoApprove("Bash", settings)).toBe(true);
+    });
+
+    it("should allow read-only tools when explicitly in always-allowed list", () => {
+      const settings = {
+        ...defaultSettings,
+        autoApproveVaultReads: false,
+        alwaysAllowedTools: ["Read"],
+      };
+      expect(shouldAutoApprove("Read", settings)).toBe(true);
     });
 
     it("should respect autoApproveVaultWrites setting", () => {

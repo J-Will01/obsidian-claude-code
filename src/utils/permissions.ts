@@ -108,19 +108,20 @@ export function getToolRiskLevel(toolName: string): RiskLevel {
 export function shouldAutoApprove(
   toolName: string,
   settings: {
+    autoApproveVaultReads: boolean;
     autoApproveVaultWrites: boolean;
     requireBashApproval: boolean;
     alwaysAllowedTools: string[];
   }
 ): boolean {
-  // Always auto-approve read-only tools.
-  if (isReadOnlyTool(toolName)) return true;
+  // Check if tool is in always-allowed list.
+  if (settings.alwaysAllowedTools.includes(toolName)) return true;
+
+  // Read-only tools depend on explicit read auto-approval setting.
+  if (isReadOnlyTool(toolName)) return settings.autoApproveVaultReads;
 
   // Always auto-approve Obsidian UI tools.
   if (isObsidianUiTool(toolName)) return true;
-
-  // Check if tool is in always-allowed list.
-  if (settings.alwaysAllowedTools.includes(toolName)) return true;
 
   // Check write tool settings.
   if (isWriteTool(toolName)) {

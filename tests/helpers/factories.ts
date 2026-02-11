@@ -19,6 +19,7 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     // AgentController settings.
     maxBudgetPerSession: 5.0,
     maxTurns: 10,
+    permissionMode: "default",
     autoApproveVaultWrites: true,
     requireBashApproval: false,
     reviewEditsWithDiff: false,
@@ -28,8 +29,10 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     sidebarWidth: 400,
     showProjectControlsPanel: true,
     maxPinnedContextChars: 8000,
+    fiveHourUsageBudgetUsd: 10.0,
     additionalMcpServers: [],
     approvedMcpServers: [],
+    usageEvents: [],
   };
 
   // Extract settings from overrides to merge separately.
@@ -51,6 +54,12 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     loadData: vi.fn().mockResolvedValue({}),
     saveData: vi.fn().mockResolvedValue(undefined),
     saveSettings: vi.fn().mockResolvedValue(undefined),
+    recordUsageEvent: vi.fn().mockResolvedValue(undefined),
+    getRollingUsageSummary: vi.fn().mockReturnValue({
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    }),
     getApiKey: vi.fn().mockReturnValue((settingsOverrides?.apiKey ?? defaultSettings.apiKey)),
     getOAuthToken: vi.fn().mockReturnValue((settingsOverrides?.oauthToken ?? defaultSettings.oauthToken)),
     ...otherOverrides,
@@ -69,6 +78,7 @@ export interface MockPluginSettings {
   // AgentController settings.
   maxBudgetPerSession: number;
   maxTurns: number;
+  permissionMode: "default" | "acceptEdits" | "plan" | "bypassPermissions";
   autoApproveVaultWrites: boolean;
   requireBashApproval: boolean;
   reviewEditsWithDiff: boolean;
@@ -78,8 +88,10 @@ export interface MockPluginSettings {
   sidebarWidth: number;
   showProjectControlsPanel: boolean;
   maxPinnedContextChars: number;
+  fiveHourUsageBudgetUsd: number;
   additionalMcpServers: { name: string; command: string; args: string[]; env?: Record<string, string>; enabled: boolean }[];
   approvedMcpServers: string[];
+  usageEvents: Array<{ timestamp: number; costUsd: number; inputTokens: number; outputTokens: number }>;
 }
 
 export interface MockPlugin {
@@ -98,6 +110,8 @@ export interface MockPlugin {
   loadData: ReturnType<typeof vi.fn>;
   saveData: ReturnType<typeof vi.fn>;
   saveSettings: ReturnType<typeof vi.fn>;
+  recordUsageEvent: ReturnType<typeof vi.fn>;
+  getRollingUsageSummary: ReturnType<typeof vi.fn>;
   getApiKey: ReturnType<typeof vi.fn>;
   getOAuthToken: ReturnType<typeof vi.fn>;
 }

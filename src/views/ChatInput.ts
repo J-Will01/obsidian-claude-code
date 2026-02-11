@@ -7,9 +7,22 @@ interface ChatInputOptions {
   onSend: (message: string) => void;
   onCancel: () => void;
   isStreaming: () => boolean;
-  onCommand?: (command: string) => void;
+  onCommand?: (command: string, args: string[]) => void;
   plugin: ClaudeCodePlugin;
 }
+
+const LOCAL_COMMANDS = new Set([
+  "new",
+  "clear",
+  "status",
+  "cost",
+  "usage",
+  "model",
+  "permissions",
+  "mcp",
+  "rewind",
+  "checkpoint",
+]);
 
 export class ChatInput {
   private containerEl: HTMLElement;
@@ -160,11 +173,11 @@ export class ChatInput {
         this.textareaEl.value = "What commands and tools do you have available?";
         break;
       case "/clear":
-        this.options.onCommand?.("clear");
+        this.options.onCommand?.("clear", []);
         this.textareaEl.value = "";
         break;
       case "/new":
-        this.options.onCommand?.("new");
+        this.options.onCommand?.("new", []);
         this.textareaEl.value = "";
         break;
       case "/file":
@@ -177,10 +190,63 @@ export class ChatInput {
       case "/context":
         this.textareaEl.value = "Show me the current context and files being used.";
         break;
+      case "/status":
+        this.options.onCommand?.("status", []);
+        this.textareaEl.value = "";
+        break;
+      case "/cost":
+        this.options.onCommand?.("cost", []);
+        this.textareaEl.value = "";
+        break;
+      case "/usage":
+        this.options.onCommand?.("usage", []);
+        this.textareaEl.value = "";
+        break;
+      case "/model":
+        this.options.onCommand?.("model", []);
+        this.textareaEl.value = "";
+        break;
+      case "/permissions":
+        this.options.onCommand?.("permissions", []);
+        this.textareaEl.value = "";
+        break;
+      case "/mcp":
+        this.options.onCommand?.("mcp", []);
+        this.textareaEl.value = "";
+        break;
+      case "/rewind":
+        this.options.onCommand?.("rewind", []);
+        this.textareaEl.value = "";
+        break;
+      case "/checkpoint":
+        this.options.onCommand?.("checkpoint", []);
+        this.textareaEl.value = "";
+        break;
       default:
         this.textareaEl.value = command + " ";
     }
     this.textareaEl.focus();
+  }
+
+  private parseLocalCommand(message: string): { command: string; args: string[] } | null {
+    if (!message.startsWith("/")) {
+      return null;
+    }
+
+    const parts = message.slice(1).trim().split(/\s+/).filter(Boolean);
+    const command = parts[0]?.toLowerCase();
+    if (!command) {
+      return null;
+    }
+
+    if (!LOCAL_COMMANDS.has(command)) {
+      return null;
+    }
+
+    return {
+      command,
+      args: parts.slice(1),
+    };
   }
 
   private insertFileMention(path: string) {
@@ -211,6 +277,19 @@ export class ChatInput {
 
     if (!message) {
       logger.warn("ChatInput", "Empty message, not sending");
+      return;
+    }
+
+    const localCommand = this.parseLocalCommand(message);
+    if (localCommand) {
+      this.options.onCommand?.(localCommand.command, localCommand.args);
+      this.textareaEl.value = "";
+      this.autoResize();
+      this.autocomplete.hide();
+      logger.info("ChatInput", "Executed local slash command", {
+        command: localCommand.command,
+        args: localCommand.args,
+      });
       return;
     }
 
