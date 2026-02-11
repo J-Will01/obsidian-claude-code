@@ -1,6 +1,8 @@
 // Pure utility functions for autocomplete logic.
 // Extracted from AutocompletePopup.ts for testability.
 
+import { getSlashCommandSuggestions } from "./slashCommands";
+
 /**
  * Suggestion item for autocomplete.
  */
@@ -10,160 +12,13 @@ export interface Suggestion {
   label: string;
   description?: string;
   icon?: string;
+  origin?: string;
 }
 
 /**
  * Built-in slash commands available in the chat input.
  */
-export const SLASH_COMMANDS: Suggestion[] = [
-  {
-    type: "command",
-    value: "/help",
-    label: "/help",
-    description: "Show available commands",
-    icon: "help-circle",
-  },
-  {
-    type: "command",
-    value: "/clear",
-    label: "/clear",
-    description: "Clear conversation history",
-    icon: "trash-2",
-  },
-  {
-    type: "command",
-    value: "/new",
-    label: "/new",
-    description: "Start a new conversation",
-    icon: "plus",
-  },
-  {
-    type: "command",
-    value: "/file",
-    label: "/file [path]",
-    description: "Add active file (or a path) as @ context",
-    icon: "file-text",
-  },
-  {
-    type: "command",
-    value: "/rename",
-    label: "/rename [title]",
-    description: "Rename the current conversation",
-    icon: "pencil",
-  },
-  {
-    type: "command",
-    value: "/pin-file",
-    label: "/pin-file",
-    description: "Pin active file contents into prompt context",
-    icon: "pin",
-  },
-  {
-    type: "command",
-    value: "/pin-selection",
-    label: "/pin-selection",
-    description: "Pin selected editor text into prompt context",
-    icon: "highlighter",
-  },
-  {
-    type: "command",
-    value: "/pin-backlinks",
-    label: "/pin-backlinks [count]",
-    description: "Pin up to N backlink files from active note",
-    icon: "link",
-  },
-  {
-    type: "command",
-    value: "/pins",
-    label: "/pins",
-    description: "Show pinned context items",
-    icon: "list",
-  },
-  {
-    type: "command",
-    value: "/clear-pins",
-    label: "/clear-pins",
-    description: "Clear all pinned context items",
-    icon: "list-x",
-  },
-  {
-    type: "command",
-    value: "/logs",
-    label: "/logs",
-    description: "Open plugin logs in your OS",
-    icon: "file-search",
-  },
-  {
-    type: "command",
-    value: "/search",
-    label: "/search [query]",
-    description: "Search vault for text",
-    icon: "search",
-  },
-  {
-    type: "command",
-    value: "/context",
-    label: "/context",
-    description: "Show current context",
-    icon: "info",
-  },
-  {
-    type: "command",
-    value: "/status",
-    label: "/status",
-    description: "Show session status",
-    icon: "activity",
-  },
-  {
-    type: "command",
-    value: "/cost",
-    label: "/cost",
-    description: "Show conversation token and cost usage",
-    icon: "wallet",
-  },
-  {
-    type: "command",
-    value: "/usage",
-    label: "/usage",
-    description: "Show Claude plan usage (5-hour and 7-day)",
-    icon: "bar-chart-2",
-  },
-  {
-    type: "command",
-    value: "/model",
-    label: "/model [name]",
-    description: "Show or change the active model",
-    icon: "cpu",
-  },
-  {
-    type: "command",
-    value: "/permissions",
-    label: "/permissions",
-    description: "Show permission settings",
-    icon: "shield",
-  },
-  {
-    type: "command",
-    value: "/mcp",
-    label: "/mcp",
-    description: "Show MCP server status",
-    icon: "plug",
-  },
-  {
-    type: "command",
-    value: "/rewind",
-    label: "/rewind",
-    description: "Restore most recent backup",
-    icon: "rotate-ccw",
-  },
-  {
-    type: "command",
-    value: "/checkpoint",
-    label: "/checkpoint",
-    description: "List rewind checkpoints",
-    icon: "history",
-  },
-];
+export const SLASH_COMMANDS: Suggestion[] = getSlashCommandSuggestions();
 
 /**
  * Filter slash commands based on a query string.
@@ -171,11 +26,36 @@ export const SLASH_COMMANDS: Suggestion[] = [
  */
 export function filterCommands(commands: Suggestion[], query: string): Suggestion[] {
   const q = query.toLowerCase();
-  return commands.filter(
-    (cmd) =>
-      cmd.value.toLowerCase().includes(q) ||
-      (cmd.description?.toLowerCase().includes(q) ?? false)
-  );
+  return commands
+    .map((cmd, index) => {
+      const value = cmd.value.toLowerCase();
+      const valueNoSlash = value.startsWith("/") ? value.slice(1) : value;
+      const desc = cmd.description?.toLowerCase() ?? "";
+
+      let rank = Number.POSITIVE_INFINITY;
+      if (q.length === 0) {
+        rank = 0;
+      } else if (valueNoSlash === q || value === `/${q}`) {
+        rank = 0;
+      } else if (valueNoSlash.startsWith(q) || value.startsWith(q)) {
+        rank = 1;
+      } else if (value.includes(q)) {
+        rank = 2;
+      } else if (desc.includes(q)) {
+        rank = 3;
+      }
+
+      return { cmd, index, rank };
+    })
+    .filter((entry) => Number.isFinite(entry.rank))
+    .sort((a, b) => {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      if (a.cmd.value.length !== b.cmd.value.length) {
+        return a.cmd.value.length - b.cmd.value.length;
+      }
+      return a.index - b.index;
+    })
+    .map((entry) => entry.cmd);
 }
 
 /**

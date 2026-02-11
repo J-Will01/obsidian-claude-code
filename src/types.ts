@@ -41,6 +41,7 @@ export interface ClaudeCodeSettings {
 
   // Rolling usage telemetry.
   usageEvents: UsageEvent[];
+  slashCommandEvents: SlashCommandEvent[];
 
   // Usage telemetry source for the header usage bar.
   // - auto: prefer Claude plan utilization (if available), else fall back to local spend budget.
@@ -73,6 +74,7 @@ export const DEFAULT_SETTINGS: ClaudeCodeSettings = {
   additionalMcpServers: [],
   approvedMcpServers: [],
   usageEvents: [],
+  slashCommandEvents: [],
   usageTelemetrySource: "auto",
   weeklyUsageAlertThresholdPercent: 80,
 };
@@ -82,6 +84,19 @@ export interface UsageEvent {
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
+}
+
+export type SlashCommandTelemetryAction = "selected" | "executedLocal" | "submittedToClaude";
+
+export interface SlashCommandEvent {
+  timestamp: number;
+  commandId: string;
+  command: string;
+  telemetryKey: string;
+  handler: "local" | "sendToClaude";
+  action: SlashCommandTelemetryAction;
+  source: "typed" | "autocomplete";
+  argsCount: number;
 }
 
 export interface ClaudeAiPlanUsageSnapshot {

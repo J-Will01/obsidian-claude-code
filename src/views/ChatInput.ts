@@ -2,36 +2,23 @@ import { setIcon } from "obsidian";
 import type ClaudeCodePlugin from "../main";
 import { AutocompletePopup } from "./AutocompletePopup";
 import { logger } from "../utils/Logger";
+import type { Suggestion } from "../utils/autocomplete";
+import {
+  getSlashCommandByValue,
+  getSlashCommandInputText,
+  parseSlashCommandInput,
+  type SlashCommandDefinition,
+} from "../utils/slashCommands";
+import type { SlashCommandTelemetryAction } from "../types";
 
 interface ChatInputOptions {
   onSend: (message: string) => void;
   onCancel: () => void;
   isStreaming: () => boolean;
   onCommand?: (command: string, args: string[]) => void;
+  getAdditionalCommandSuggestions?: () => Suggestion[];
   plugin: ClaudeCodePlugin;
 }
-
-const LOCAL_COMMANDS = new Set([
-  "new",
-  "clear",
-  "status",
-  "cost",
-  "usage",
-  "context",
-  "file",
-  "rename",
-  "pin-file",
-  "pin-selection",
-  "pin-backlinks",
-  "pins",
-  "clear-pins",
-  "logs",
-  "model",
-  "permissions",
-  "mcp",
-  "rewind",
-  "checkpoint",
-]);
 
 export class ChatInput {
   private containerEl: HTMLElement;
@@ -47,10 +34,22 @@ export class ChatInput {
     // Create autocomplete popup.
     this.autocomplete = new AutocompletePopup(options.plugin, (suggestion) => {
       if (suggestion.type === "command") {
-        this.handleCommand(suggestion.value);
+        const command = getSlashCommandByValue(suggestion.value);
+        if (command) {
+          this.handleCommand(command);
+        } else {
+          const hasArgumentHint =
+            suggestion.label.trim().startsWith(suggestion.value) &&
+            suggestion.label.trim() !== suggestion.value;
+          this.textareaEl.value = hasArgumentHint ? `${suggestion.value} ` : suggestion.value;
+          this.textareaEl.selectionStart = this.textareaEl.selectionEnd = this.textareaEl.value.length;
+          this.textareaEl.focus();
+        }
       } else {
         this.insertFileMention(suggestion.value);
       }
+    }, {
+      getCommandSuggestions: options.getAdditionalCommandSuggestions,
     });
 
     this.render();
@@ -149,115 +148,11 @@ export class ChatInput {
     this.autocomplete.show(this.textareaEl, type, query);
   }
 
-  private handleCommand(command: string) {
-    switch (command) {
-      case "/help":
-        this.textareaEl.value = "What commands and tools do you have available?";
-        break;
-      case "/clear":
-        this.options.onCommand?.("clear", []);
-        this.textareaEl.value = "";
-        break;
-      case "/new":
-        this.options.onCommand?.("new", []);
-        this.textareaEl.value = "";
-        break;
-      case "/file":
-        this.options.onCommand?.("file", []);
-        this.textareaEl.value = "";
-        break;
-      case "/rename":
-        this.options.onCommand?.("rename", []);
-        this.textareaEl.value = "";
-        break;
-      case "/pin-file":
-        this.options.onCommand?.("pin-file", []);
-        this.textareaEl.value = "";
-        break;
-      case "/pin-selection":
-        this.options.onCommand?.("pin-selection", []);
-        this.textareaEl.value = "";
-        break;
-      case "/pin-backlinks":
-        this.options.onCommand?.("pin-backlinks", []);
-        this.textareaEl.value = "";
-        break;
-      case "/pins":
-        this.options.onCommand?.("pins", []);
-        this.textareaEl.value = "";
-        break;
-      case "/clear-pins":
-        this.options.onCommand?.("clear-pins", []);
-        this.textareaEl.value = "";
-        break;
-      case "/logs":
-        this.options.onCommand?.("logs", []);
-        this.textareaEl.value = "";
-        break;
-      case "/search":
-        this.textareaEl.value = "Search the vault for: ";
-        break;
-      case "/context":
-        this.options.onCommand?.("context", []);
-        this.textareaEl.value = "";
-        break;
-      case "/status":
-        this.options.onCommand?.("status", []);
-        this.textareaEl.value = "";
-        break;
-      case "/cost":
-        this.options.onCommand?.("cost", []);
-        this.textareaEl.value = "";
-        break;
-      case "/usage":
-        this.options.onCommand?.("usage", []);
-        this.textareaEl.value = "";
-        break;
-      case "/model":
-        this.options.onCommand?.("model", []);
-        this.textareaEl.value = "";
-        break;
-      case "/permissions":
-        this.options.onCommand?.("permissions", []);
-        this.textareaEl.value = "";
-        break;
-      case "/mcp":
-        this.options.onCommand?.("mcp", []);
-        this.textareaEl.value = "";
-        break;
-      case "/rewind":
-        this.options.onCommand?.("rewind", []);
-        this.textareaEl.value = "";
-        break;
-      case "/checkpoint":
-        this.options.onCommand?.("checkpoint", []);
-        this.textareaEl.value = "";
-        break;
-      default:
-        this.textareaEl.value = command + " ";
-    }
+  private handleCommand(command: SlashCommandDefinition) {
+    this.recordSlashCommandEvent(command, "selected", "autocomplete", 0);
+    this.textareaEl.value = getSlashCommandInputText(command);
+    this.textareaEl.selectionStart = this.textareaEl.selectionEnd = this.textareaEl.value.length;
     this.textareaEl.focus();
-  }
-
-  private parseLocalCommand(message: string): { command: string; args: string[] } | null {
-    if (!message.startsWith("/")) {
-      return null;
-    }
-
-    const parts = message.slice(1).trim().split(/\s+/).filter(Boolean);
-    const command = parts[0]?.toLowerCase();
-    if (!command) {
-      return null;
-    }
-
-    if (!LOCAL_COMMANDS.has(command)) {
-      return null;
-    }
-
-    return {
-      command,
-      args: parts.slice(1),
-    };
   }
 
   private insertFileMention(path: string) {
@@ -291,17 +186,22 @@ export class ChatInput {
       return;
     }
 
-    const localCommand = this.parseLocalCommand(message);
-    if (localCommand) {
-      this.options.onCommand?.(localCommand.command, localCommand.args);
+    const parsed = parseSlashCommandInput(message);
+    if (parsed && parsed.command.handler === "local") {
+      this.options.onCommand?.(parsed.command.id, parsed.args);
+      this.recordSlashCommandEvent(parsed.command, "executedLocal", "typed", parsed.args.length);
       this.textareaEl.value = "";
       this.autoResize();
       this.autocomplete.hide();
       logger.info("ChatInput", "Executed local slash command", {
-        command: localCommand.command,
-        args: localCommand.args,
+        command: parsed.command.id,
+        args: parsed.args,
       });
       return;
+    }
+
+    if (parsed && parsed.command.handler === "sendToClaude") {
+      this.recordSlashCommandEvent(parsed.command, "submittedToClaude", "typed", parsed.args.length);
     }
 
     // Include file contexts in message if any.
@@ -402,5 +302,30 @@ export class ChatInput {
   setValue(value: string) {
     this.textareaEl.value = value;
     this.autoResize();
+  }
+
+  private recordSlashCommandEvent(
+    command: SlashCommandDefinition,
+    action: SlashCommandTelemetryAction,
+    source: "typed" | "autocomplete",
+    argsCount: number
+  ) {
+    void this.options.plugin.recordSlashCommandEvent({
+      timestamp: Date.now(),
+      commandId: command.id,
+      command: command.command,
+      telemetryKey: command.telemetryKey,
+      handler: command.handler,
+      action,
+      source,
+      argsCount,
+    }).catch((error: unknown) => {
+      logger.warn("ChatInput", "Failed to record slash command telemetry", {
+        commandId: command.id,
+        action,
+        source,
+        error: String(error),
+      });
+    });
   }
 }

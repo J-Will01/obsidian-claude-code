@@ -1,5 +1,12 @@
 import { Plugin, WorkspaceLeaf, Notice, ItemView, setIcon } from "obsidian";
-import { ClaudeAiPlanUsageSnapshot, ClaudeCodeSettings, DEFAULT_SETTINGS, CHAT_VIEW_TYPE, UsageEvent } from "./types";
+import {
+  ClaudeAiPlanUsageSnapshot,
+  ClaudeCodeSettings,
+  DEFAULT_SETTINGS,
+  CHAT_VIEW_TYPE,
+  SlashCommandEvent,
+  UsageEvent,
+} from "./types";
 import { ChatView } from "./views/ChatView";
 import { ClaudeCodeSettingTab } from "./settings/SettingsTab";
 import { logger } from "./utils/Logger";
@@ -14,6 +21,7 @@ import {
 } from "./utils/Keychain";
 import { CLAUDE_ICON_NAME, registerClaudeIcon } from "./utils/icons";
 import { fetchClaudeAiPlanUsage } from "./utils/claudeAiPlanUsage";
+import { getTopSlashCommands, summarizeSlashCommandEvents } from "./utils/slashTelemetry";
 
 export default class ClaudeCodePlugin extends Plugin {
   settings: ClaudeCodeSettings = DEFAULT_SETTINGS;
@@ -240,6 +248,40 @@ export default class ClaudeCodePlugin extends Plugin {
 
     this.settings.usageEvents = pruned;
     await this.saveSettings();
+  }
+
+  async recordSlashCommandEvent(event: SlashCommandEvent) {
+    if (!Number.isFinite(event.timestamp) || !event.commandId || !event.telemetryKey) {
+      return;
+    }
+
+    const now = Date.now();
+    const retentionMs = 30 * 24 * 60 * 60 * 1000;
+    const cutoff = now - retentionMs;
+    const existing = this.settings.slashCommandEvents || [];
+    const pruned = existing.filter((entry) => entry.timestamp >= cutoff);
+
+    pruned.push({
+      timestamp: event.timestamp,
+      commandId: event.commandId,
+      command: event.command,
+      telemetryKey: event.telemetryKey,
+      handler: event.handler,
+      action: event.action,
+      source: event.source,
+      argsCount: Math.max(0, event.argsCount || 0),
+    });
+
+    this.settings.slashCommandEvents = pruned;
+    await this.saveSettings();
+  }
+
+  getSlashCommandEventSummary(windowHours = 24, now = Date.now()) {
+    return summarizeSlashCommandEvents(this.settings.slashCommandEvents || [], windowHours, now);
+  }
+
+  getTopSlashCommands(windowHours = 24, limit = 5, now = Date.now()) {
+    return getTopSlashCommands(this.settings.slashCommandEvents || [], windowHours, limit, now);
   }
 
   refreshClaudeMdFileExplorerIcons() {

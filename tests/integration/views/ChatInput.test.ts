@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createContainer, keydown, pressEnter, pressEscape, type } from "../../helpers/dom";
 import { createMockPlugin } from "../../helpers/factories";
 import { ChatInput } from "../../../src/views/ChatInput";
+import { getSlashCommands } from "../../../src/utils/slashCommands";
 
 describe("ChatInput", () => {
   let container: HTMLElement;
@@ -400,6 +401,45 @@ describe("ChatInput", () => {
   });
 
   describe("local slash command execution", () => {
+    it("should route each slash command deterministically by handler type", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      const input = new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      for (const command of getSlashCommands()) {
+        plugin.recordSlashCommandEvent.mockClear();
+        input.setValue(command.command);
+        pressEnter(textarea);
+        if (command.handler === "local") {
+          expect(onCommand).toHaveBeenLastCalledWith(command.id, []);
+          expect(onSend).not.toHaveBeenCalledWith(command.command);
+          expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              commandId: command.id,
+              telemetryKey: command.telemetryKey,
+              action: "executedLocal",
+            })
+          );
+        } else {
+          expect(onSend).toHaveBeenLastCalledWith(command.command);
+          expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              commandId: command.id,
+              telemetryKey: command.telemetryKey,
+              action: "submittedToClaude",
+            })
+          );
+        }
+      }
+    });
+
     it("should execute /clear from autocomplete flow", () => {
       const plugin = createMockPlugin();
       const onCommand = vi.fn();
@@ -414,7 +454,10 @@ describe("ChatInput", () => {
       const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
       type(textarea, "/clear");
       pressEnter(textarea);
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(textarea.value).toBe("/clear");
 
+      pressEnter(textarea);
       expect(onCommand).toHaveBeenCalledWith("clear", []);
       expect(onSend).not.toHaveBeenCalled();
       expect(input.getValue()).toBe("");
@@ -457,6 +500,124 @@ describe("ChatInput", () => {
       expect(onSend).toHaveBeenCalledWith("/unknown command");
     });
 
+    it("should execute /help as a local command from autocomplete", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/help");
+      pressEnter(textarea);
+
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(onSend).not.toHaveBeenCalled();
+      expect(textarea.value).toBe("/help");
+      expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: "help",
+          action: "selected",
+          source: "autocomplete",
+        })
+      );
+      expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: "help",
+          action: "selected",
+          source: "autocomplete",
+        })
+      );
+
+      plugin.recordSlashCommandEvent.mockClear();
+      pressEnter(textarea);
+      expect(onCommand).toHaveBeenCalledWith("help", []);
+      expect(onSend).not.toHaveBeenCalled();
+      expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: "help",
+          action: "executedLocal",
+          source: "typed",
+        })
+      );
+    });
+
+    it("should treat /search consistently for autocomplete and typed send", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/search");
+      pressEnter(textarea);
+      // First Enter selects autocomplete suggestion.
+      expect(onSend).not.toHaveBeenCalled();
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(textarea.value).toBe("/search ");
+      expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: "search",
+          action: "selected",
+          source: "autocomplete",
+        })
+      );
+
+      plugin.recordSlashCommandEvent.mockClear();
+      type(textarea, "/search backlinks in daily notes");
+      pressEnter(textarea);
+      expect(onSend).toHaveBeenCalledWith("/search backlinks in daily notes");
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(plugin.recordSlashCommandEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandId: "search",
+          action: "submittedToClaude",
+          argsCount: 4,
+        })
+      );
+    });
+
+    it("should apply SDK command autocomplete suggestions for unknown slash commands", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        getAdditionalCommandSuggestions: () => [
+          {
+            type: "command",
+            value: "/doctor",
+            label: "/doctor [scope]",
+            description: "Run diagnostics",
+            icon: "terminal",
+          },
+        ],
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/doctor");
+      pressEnter(textarea);
+      expect(textarea.value).toBe("/doctor ");
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(onSend).not.toHaveBeenCalled();
+
+      pressEnter(textarea);
+      expect(onSend).toHaveBeenCalledWith("/doctor");
+      expect(onCommand).not.toHaveBeenCalled();
+    });
+
     it("should execute /checkpoint as a local command", () => {
       const plugin = createMockPlugin();
       const onCommand = vi.fn();
@@ -471,7 +632,10 @@ describe("ChatInput", () => {
       const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
       type(textarea, "/checkpoint");
       pressEnter(textarea);
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(textarea.value).toBe("/checkpoint");
 
+      pressEnter(textarea);
       expect(onCommand).toHaveBeenCalledWith("checkpoint", []);
       expect(onSend).not.toHaveBeenCalled();
     });
@@ -490,7 +654,10 @@ describe("ChatInput", () => {
       const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
       type(textarea, "/context");
       pressEnter(textarea);
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(textarea.value).toBe("/context");
 
+      pressEnter(textarea);
       expect(onCommand).toHaveBeenCalledWith("context", []);
       expect(onSend).not.toHaveBeenCalled();
     });
@@ -528,8 +695,58 @@ describe("ChatInput", () => {
       const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
       type(textarea, "/pin-file");
       pressEnter(textarea);
+      expect(onCommand).not.toHaveBeenCalled();
+      expect(textarea.value).toBe("/pin-file");
 
+      pressEnter(textarea);
       expect(onCommand).toHaveBeenCalledWith("pin-file", []);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("should navigate command suggestions with arrows and execute selected command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/");
+      keydown(textarea, "ArrowDown");
+      pressEnter(textarea);
+
+      // First Enter fills the selected command.
+      const selectedCommand = textarea.value;
+      expect(selectedCommand.startsWith("/")).toBe(true);
+      expect(onCommand).not.toHaveBeenCalled();
+
+      // Second Enter executes it.
+      pressEnter(textarea);
+      const selectedCommandName = selectedCommand.slice(1).trim();
+      expect(onCommand).toHaveBeenCalledWith(selectedCommandName, []);
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it("should use Tab to fill the selected command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/mo");
+      keydown(textarea, "Tab");
+      expect(textarea.value).toBe("/model ");
+      expect(onCommand).not.toHaveBeenCalled();
       expect(onSend).not.toHaveBeenCalled();
     });
 

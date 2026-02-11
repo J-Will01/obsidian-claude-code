@@ -50,6 +50,13 @@ Integrations with popular Obsidian plugins.
 - Tasks plugin support
 - Calendar awareness
 
+### [06 - CLI/Extension Parity](./06-cli-extension-parity.md)
+Gap analysis against current Claude Code CLI and IDE extension behavior.
+- Slash command architecture and consistency
+- Dynamic command/model discovery
+- Contextual tooltips and timely guidance
+- Obsidian-appropriate parity priorities
+
 ## Implementation Status
 
 | Feature | Category | Priority | Status |
@@ -60,6 +67,7 @@ Integrations with popular Obsidian plugins.
 | get_graph_connections tool | Tools | P1 | Planned |
 | Status bar indicator | Obsidian | P1 | Planned |
 | Dataview integration | Ecosystem | P1 | Planned |
+| CLI/extension parity roadmap | Cross-cutting | P0/P1 | ✅ Audit complete |
 | Structured output | SDK | P1 | Planned |
 | Canvas tools | Tools | P2 | Planned |
 | Voice input | UX | P3 | Idea |

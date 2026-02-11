@@ -956,6 +956,21 @@
 .claude-code-autocomplete-label {
   font-size: 13px;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.claude-code-autocomplete-origin {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background-color: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  padding: 1px 6px;
 }
 
 .claude-code-autocomplete-desc {

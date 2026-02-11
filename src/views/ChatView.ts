@@ -10,6 +10,13 @@ import { logger } from "../utils/Logger";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
 import { revertFromBackup } from "../utils/DiffEngine";
 import { computeContextUsageEstimate } from "../utils/contextUsage";
+import type { Suggestion } from "../utils/autocomplete";
+import {
+  getExternalSlashCommandOrigin,
+  getExternalSlashCommandSuggestions,
+  getSlashCommands,
+  normalizeSlashCommandName,
+} from "../utils/slashCommands";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -641,6 +648,7 @@ export class ChatView extends ItemView {
     this.chatInput = new ChatInput(this.inputContainerEl, {
       onSend: (message) => this.handleSendMessage(message),
       onCancel: () => this.handleCancelStreaming(),
+      getAdditionalCommandSuggestions: () => this.getSdkSlashCommandSuggestions(),
       onCommand: (command, args) => {
         void this.handleInputCommand(command, args);
       },
@@ -652,6 +660,9 @@ export class ChatView extends ItemView {
   private async handleInputCommand(command: string, args: string[] = []) {
     logger.debug("ChatView", "Handling input command", { command, args });
     switch (command) {
+      case "help":
+        await this.showHelpMessage();
+        break;
       case "new":
       case "clear":
         await this.startNewConversation();
@@ -712,6 +723,49 @@ export class ChatView extends ItemView {
     }
   }
 
+  private getSdkSlashCommandSuggestions(): Suggestion[] {
+    return getExternalSlashCommandSuggestions(this.agentController.getSupportedCommands());
+  }
+
+  private async showHelpMessage() {
+    const localCommands = getSlashCommands();
+    const sdkCommands = this.agentController.getSupportedCommands();
+    const localByValue = new Set(localCommands.map((cmd) => cmd.command.toLowerCase()));
+    const externalOnly = sdkCommands
+      .map((cmd) => ({
+        name: normalizeSlashCommandName(cmd.name),
+        description: cmd.description,
+        argumentHint: cmd.argumentHint,
+      }))
+      .filter((cmd) => cmd.name && !localByValue.has(cmd.name.toLowerCase()));
+
+    const lines: string[] = [
+      "- Local slash commands",
+      ...localCommands.map((cmd) => {
+        const usage = cmd.argumentHint ? `${cmd.command} ${cmd.argumentHint}` : cmd.command;
+        return `- \`${usage}\` - ${cmd.description}`;
+      }),
+      "",
+      "- Claude commands (discovered this session)",
+      ...(externalOnly.length > 0
+        ? externalOnly.map((cmd) => {
+          const usage = cmd.argumentHint ? `${cmd.name} ${cmd.argumentHint}` : cmd.name;
+          const description = cmd.description || "Claude command";
+          const source = getExternalSlashCommandOrigin(cmd.name);
+          return `- \`${usage}\` - ${description} (source: ${source})`;
+        })
+        : ["- `none discovered yet` (send a message first to populate SDK command metadata)"]),
+      "",
+      "- Examples",
+      "- `@[[Daily.md]] Summarize key tasks`",
+      "- `/model opus`",
+      "- `/permissions`",
+      "- `/search backlinks for this note`",
+    ];
+
+    await this.appendLocalAssistantMessage("Help", lines.join("\n"));
+  }
+
   private formatUsageTime(iso?: string) {
     if (!iso) return "unknown";
     const dt = new Date(iso);
@@ -724,6 +778,8 @@ export class ChatView extends ItemView {
     const auth = this.plugin.getAuthStatus();
     const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
     const planErr = this.plugin.getClaudeAiPlanUsageError();
+    const slashSummary = this.plugin.getSlashCommandEventSummary(24);
+    const topSlashCommands = this.plugin.getTopSlashCommands(24, 5);
     const activeMcpServers = this.plugin.settings.additionalMcpServers
       .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
       .map((server) => server.name);
@@ -747,6 +803,10 @@ export class ChatView extends ItemView {
         ? `  - 7d: \`${(plan.sevenDayUtilizationPercent ?? 0).toFixed(0)}%\` (resets \`${this.formatUsageTime(plan.sevenDayResetsAt)}\`)`
         : "",
       planErr ? `  - Last plan usage error: \`${planErr}\`` : "",
+      `- Slash commands (24h): \`${slashSummary.total}\` total (\`${slashSummary.selected}\` selected, \`${slashSummary.executedLocal}\` local exec, \`${slashSummary.submittedToClaude}\` sent to Claude)`,
+      topSlashCommands.length > 0
+        ? `- Top slash commands (24h): \`${topSlashCommands.map((entry) => `${entry.command} (${entry.total})`).join(", ")}\``
+        : "- Top slash commands (24h): `none`",
       `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
     ].filter(Boolean);
 
@@ -986,7 +1046,8 @@ export class ChatView extends ItemView {
   }
 
   private async handleModelCommand(args: string[]) {
-    const supportedModels = ["sonnet", "opus", "haiku"];
+    const discoveredModels = this.agentController.getSupportedModels();
+    const supportedModels = discoveredModels.length > 0 ? discoveredModels : ["sonnet", "opus", "haiku"];
     const requestedModel = args[0]?.toLowerCase();
 
     if (!requestedModel) {
