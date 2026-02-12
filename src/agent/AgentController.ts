@@ -17,6 +17,7 @@ import { requireClaudeExecutable } from "../utils/claudeExecutable";
 import { StreamingAccumulator } from "../utils/StreamingAccumulator";
 import { applyNormalizedToolResult, normalizeToolResult } from "../utils/ToolResultNormalizer";
 import { applyMultiEdit, applySimpleEdit, createBackup, createUnifiedDiff } from "../utils/DiffEngine";
+import { mergeStreamingText } from "../utils/streamingText";
 
 // Type for content blocks from the SDK.
 interface TextBlock {
@@ -91,6 +92,12 @@ export class AgentController {
   private pendingToolEdits: Map<string, { filePath: string; diff: string; backupPath?: string }> = new Map();
   private activeConversationId: string | null = null;
   private lastUsageSample: UsageSample | null = null;
+  private supportedModelsCache: string[] = [];
+  private supportedCommandsCache: Array<{
+    name: string;
+    description: string;
+    argumentHint: string;
+  }> = [];
 
   constructor(plugin: ClaudeCodePlugin) {
     this.plugin = plugin;
@@ -202,7 +209,7 @@ export class AgentController {
       }
       logger.info("AgentController", "Starting query()", { claudeExecutable, pathAddition: claudeDir });
 
-      for await (const message of query({
+      const runningQuery = query({
         // Use simple string prompt for cleaner API.
         prompt: content,
         options: {
@@ -249,7 +256,11 @@ export class AgentController {
           // Note: SDK hooks use shell command matchers, not inline callbacks.
           // Subagent lifecycle is tracked through tool call state transitions.
         },
-      })) {
+      });
+
+      void this.captureQueryCapabilities(runningQuery);
+
+      for await (const message of runningQuery) {
         logger.debug("AgentController", "Received SDK message", { type: message.type, subtype: (message as any).subtype });
 
         // Process different message types.
@@ -272,9 +283,9 @@ export class AgentController {
           const assistantMsg = message as SDKAssistantMessage;
           const { text, tools } = this.processAssistantMessage(assistantMsg);
 
-          // Only update content if there's new text (preserves previous text when tool-only messages arrive).
+          // Preserve earlier assistant text when later tool phases emit follow-up text.
           if (text) {
-            finalContent = text;
+            finalContent = mergeStreamingText(finalContent, text);
           }
 
           // Update tool calls.
@@ -339,9 +350,9 @@ export class AgentController {
               inputTokens: this.lastUsageSample.inputTokens,
               outputTokens: this.lastUsageSample.outputTokens,
             });
-            // Final result text may be in resultMsg.result.
-            if (resultMsg.result && !finalContent) {
-              finalContent = resultMsg.result;
+            // Final result text may be present and should merge with earlier assistant text.
+            if (resultMsg.result) {
+              finalContent = mergeStreamingText(finalContent, resultMsg.result);
             }
 
             // Mark any remaining running tools as success on completion.
@@ -973,6 +984,14 @@ export class AgentController {
     this.sessionId = sessionId;
   }
 
+  getSupportedModels(): string[] {
+    return [...this.supportedModelsCache];
+  }
+
+  getSupportedCommands(): Array<{ name: string; description: string; argumentHint: string }> {
+    return [...this.supportedCommandsCache];
+  }
+
   // Check if the client is ready (has some form of authentication).
   isReady(): boolean {
     return !!(
@@ -986,5 +1005,51 @@ export class AgentController {
   // Generate a unique message ID.
   private generateId(): string {
     return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  }
+
+  private async captureQueryCapabilities(runningQuery: any): Promise<void> {
+    try {
+      if (typeof runningQuery?.supportedModels === "function") {
+        const models = await runningQuery.supportedModels();
+        if (Array.isArray(models) && models.length > 0) {
+          const normalized = Array.from(
+            new Set(
+              models
+                .map((model: any) => String(model?.value ?? model ?? "").trim().toLowerCase())
+                .filter(Boolean)
+            )
+          );
+          if (normalized.length > 0) {
+            this.supportedModelsCache = normalized;
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug("AgentController", "Unable to fetch supported models", { error: String(error) });
+    }
+
+    try {
+      if (typeof runningQuery?.supportedCommands === "function") {
+        const commands = await runningQuery.supportedCommands();
+        if (Array.isArray(commands) && commands.length > 0) {
+          const normalized = commands
+            .map((command: any) => {
+              const name = String(command?.name ?? "").trim();
+              if (!name) return null;
+              return {
+                name,
+                description: String(command?.description ?? "").trim(),
+                argumentHint: String(command?.argumentHint ?? "").trim(),
+              };
+            })
+            .filter((command: any): command is { name: string; description: string; argumentHint: string } => !!command);
+          if (normalized.length > 0) {
+            this.supportedCommandsCache = normalized;
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug("AgentController", "Unable to fetch supported commands", { error: String(error) });
+    }
   }
 }

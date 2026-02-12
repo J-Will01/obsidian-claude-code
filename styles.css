@@ -295,13 +295,6 @@
   margin-right: 10%;
 }
 
-.claude-code-message-role {
-  font-size: 11px;
-  font-weight: 600;
-  margin-bottom: 4px;
-  opacity: 0.7;
-}
-
 .claude-code-message-content {
   font-size: 14px;
   line-height: 1.42;
@@ -624,6 +617,64 @@
   color: var(--text-muted);
 }
 
+.claude-code-input-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.claude-code-input-hint-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  max-width: 100%;
+}
+
+.claude-code-input-hint-chip.is-warning {
+  border-color: color-mix(in srgb, var(--text-warning) 45%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--text-warning) 8%, var(--background-primary));
+  color: var(--text-normal);
+}
+
+.claude-code-input-hint-action,
+.claude-code-input-hint-dismiss {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.claude-code-input-hint-action {
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 3px 2px 3px 8px;
+  text-align: left;
+}
+
+.claude-code-input-hint-action:hover {
+  color: var(--text-normal);
+}
+
+.claude-code-input-hint-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-right: 2px;
+  border-radius: 999px;
+}
+
+.claude-code-input-hint-dismiss:hover {
+  background: var(--background-modifier-hover);
+}
+
 /* Loading/Streaming State */
 .claude-code-streaming {
   display: flex;
@@ -908,6 +959,125 @@
   color: var(--text-error);
 }
 
+/* Resume Modal */
+.claude-code-resume-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 75vh;
+  min-width: min(720px, 92vw);
+}
+
+.claude-code-resume-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.claude-code-resume-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary-alt);
+}
+
+.claude-code-resume-search-icon {
+  color: var(--text-muted);
+  display: inline-flex;
+}
+
+.claude-code-resume-search {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: 14px;
+}
+
+.claude-code-resume-search:focus {
+  outline: none;
+}
+
+.claude-code-resume-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 180px;
+  max-height: 48vh;
+  padding-right: 2px;
+}
+
+.claude-code-resume-item {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--background-secondary);
+}
+
+.claude-code-resume-item:hover {
+  border-color: var(--background-modifier-border);
+  background: var(--background-modifier-hover);
+}
+
+.claude-code-resume-item.is-current {
+  border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--background-modifier-border));
+}
+
+.claude-code-resume-item.is-selected {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-secondary));
+}
+
+.claude-code-resume-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.claude-code-resume-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.claude-code-resume-current-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.claude-code-resume-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.claude-code-resume-meta.subtle {
+  opacity: 0.75;
+}
+
+.claude-code-resume-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.claude-code-resume-footer {
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 10px;
+}
+
 /* Autocomplete Popup */
 .claude-code-autocomplete {
   background-color: var(--background-primary);
@@ -956,6 +1126,21 @@
 .claude-code-autocomplete-label {
   font-size: 13px;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.claude-code-autocomplete-origin {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background-color: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  padding: 1px 6px;
 }
 
 .claude-code-autocomplete-desc {

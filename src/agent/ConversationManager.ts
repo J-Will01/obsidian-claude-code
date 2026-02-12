@@ -412,7 +412,15 @@ export class ConversationManager {
 
   // Get display messages for the UI.
   getDisplayMessages(): ChatMessage[] {
-    return this.currentConversation?.displayMessages || [];
+    const messages = this.currentConversation?.displayMessages ?? [];
+    return messages.map((message) => ({
+      ...message,
+      toolCalls: message.toolCalls?.map((toolCall) => ({
+        ...toolCall,
+        input: { ...toolCall.input },
+        subagentProgress: toolCall.subagentProgress ? { ...toolCall.subagentProgress } : undefined,
+      })),
+    }));
   }
 
   // Set the history (from AgentController).

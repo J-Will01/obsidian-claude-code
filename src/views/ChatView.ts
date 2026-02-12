@@ -1,15 +1,25 @@
 import { ItemView, WorkspaceLeaf, setIcon, Menu, ViewStateResult, Notice, MarkdownView } from "obsidian";
 import { CHAT_VIEW_TYPE, ChatMessage, ToolCall, Conversation, ErrorType } from "../types";
 import type ClaudeCodePlugin from "../main";
-import { ChatInput } from "./ChatInput";
+import { ChatInput, type ChatInputHint } from "./ChatInput";
 import { MessageList } from "./MessageList";
 import { AgentController, classifyError } from "../agent/AgentController";
 import { ConversationManager } from "../agent/ConversationManager";
 import { ConversationHistoryModal } from "./ConversationHistoryModal";
+import { ResumeConversationModal } from "./ResumeConversationModal";
 import { logger } from "../utils/Logger";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
 import { revertFromBackup } from "../utils/DiffEngine";
 import { computeContextUsageEstimate } from "../utils/contextUsage";
+import type { Suggestion } from "../utils/autocomplete";
+import { mergeStreamingText } from "../utils/streamingText";
+import {
+  getExternalSlashCommandOrigin,
+  getExternalSlashCommandSuggestions,
+  getSlashCommands,
+  normalizeSlashCommandName,
+} from "../utils/slashCommands";
+import { buildContextualHints } from "../utils/hints";
 
 export class ChatView extends ItemView {
   plugin: ClaudeCodePlugin;
@@ -24,12 +34,18 @@ export class ChatView extends ItemView {
   private agentController: AgentController;
   private conversationManager: ConversationManager;
   private streamingMessageId: string | null = null;
+  private streamingTextMessageId: string | null = null;
+  private streamingBaseContentPrefix: string | null = null;
   private viewId: string;
   private isCancelling = false;  // Flag to suppress error display during intentional cancel.
   private activeStreamConversationId: string | null = null;  // Track which conversation owns the active stream.
   private lastUserMessage: string | null = null;  // Store last message for retry functionality.
   private telemetryIntervalId: number | null = null;
   private isRenamingConversationTitle = false;
+  private dismissedHintIds = new Set<string>();
+  private hintLastShownAt = new Map<string, number>();
+  private visibleHintIds = new Set<string>();
+  private latestHintMetrics: { contextPercentUsed: number; usagePercentUsed: number | null } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -409,6 +425,8 @@ export class ChatView extends ItemView {
 
     // Clear UI streaming state (but stream continues in background).
     this.streamingMessageId = null;
+    this.streamingTextMessageId = null;
+    this.streamingBaseContentPrefix = null;
     this.isStreaming = false;
 
     const conv = await this.conversationManager.loadConversation(id);
@@ -523,6 +541,7 @@ export class ChatView extends ItemView {
 
     const snapshot = this.plugin.getClaudeAiPlanUsageSnapshot();
     const usePlanUsage = (source === "claudeAi" || source === "auto") && !!snapshot;
+    let usagePercentForHints: number | null = null;
 
     const formatResetCountdown = (iso?: string) => {
       if (!iso) return null;
@@ -546,6 +565,7 @@ export class ChatView extends ItemView {
 
     if (usePlanUsage && snapshot) {
       const usagePercent = Math.max(0, Math.min(100, snapshot.fiveHourUtilizationPercent));
+      usagePercentForHints = usagePercent;
       usageFill.style.width = `${usagePercent}%`;
       usageValue.setText(`${usagePercent.toFixed(0)} %`);
       usageValue.removeAttribute("title");
@@ -570,6 +590,7 @@ export class ChatView extends ItemView {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
         const fallbackPercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+        usagePercentForHints = fallbackPercent;
         usageFill.style.width = `${fallbackPercent}%`;
         usageValue.setText(`${fallbackPercent.toFixed(0)} %`);
         usageValue.setAttribute("title", `Local fallback: $${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
@@ -581,6 +602,7 @@ export class ChatView extends ItemView {
         const fiveHourBudget = Math.max(this.plugin.settings.fiveHourUsageBudgetUsd || 0, 0.01);
         const rolling = this.plugin.getRollingUsageSummary(5);
         const usagePercent = Math.min(100, (rolling.costUsd / fiveHourBudget) * 100);
+        usagePercentForHints = usagePercent;
         usageFill.style.width = `${usagePercent}%`;
         usageValue.setText(`${usagePercent.toFixed(0)} %`);
         usageValue.setAttribute("title", `$${rolling.costUsd.toFixed(2)} / $${fiveHourBudget.toFixed(2)}`);
@@ -608,6 +630,140 @@ export class ChatView extends ItemView {
       "title",
       `${contextEstimate.usedTokens.toLocaleString()} / ${contextEstimate.contextWindow.toLocaleString()} tokens (${sourceLabel})`
     );
+
+    this.latestHintMetrics = {
+      contextPercentUsed: contextEstimate.percentUsed,
+      usagePercentUsed: usagePercentForHints,
+    };
+    this.updateContextualInputHints(
+      contextEstimate.percentUsed,
+      usagePercentForHints
+    );
+  }
+
+  private updateContextualInputHints(contextPercentUsed: number, usagePercentUsed: number | null) {
+    if (!this.chatInput) return;
+
+    const now = Date.now();
+    const approvedMcpServers = new Set(this.plugin.settings.approvedMcpServers);
+    const hasPendingMcpApproval = this.plugin.settings.additionalMcpServers.some(
+      (server) => server.enabled && !approvedMcpServers.has(server.name)
+    );
+
+    const candidates = buildContextualHints({
+      contextPercentUsed,
+      usagePercentUsed,
+      permissionPromptSignals: this.getPermissionPromptSignals(now),
+      hasPendingMcpApproval,
+      permissionMode: this.plugin.settings.permissionMode,
+    });
+
+    const hintsToRender: ChatInputHint[] = [];
+    for (const hint of candidates) {
+      if (this.dismissedHintIds.has(hint.id)) {
+        continue;
+      }
+
+      const isVisible = this.visibleHintIds.has(hint.id);
+      const lastShownAt = this.hintLastShownAt.get(hint.id);
+      if (!isVisible && lastShownAt && (now - lastShownAt) < hint.cooldownMs) {
+        continue;
+      }
+
+      if (!isVisible) {
+        this.hintLastShownAt.set(hint.id, now);
+      }
+
+      hintsToRender.push({
+        id: hint.id,
+        text: hint.text,
+        command: hint.command,
+        severity: hint.severity,
+        onDismiss: (hintId: string) => this.handleHintDismiss(hintId),
+      });
+
+      if (hintsToRender.length >= 3) {
+        break;
+      }
+    }
+
+    this.visibleHintIds = new Set(hintsToRender.map((hint) => hint.id));
+    this.chatInput.setHints(hintsToRender);
+  }
+
+  private handleHintDismiss(hintId: string) {
+    this.dismissedHintIds.add(hintId);
+    this.visibleHintIds.delete(hintId);
+
+    if (!this.latestHintMetrics) {
+      this.chatInput.setHints([]);
+      return;
+    }
+
+    this.updateContextualInputHints(
+      this.latestHintMetrics.contextPercentUsed,
+      this.latestHintMetrics.usagePercentUsed
+    );
+  }
+
+  private getPermissionPromptSignals(now: number): number {
+    const windowMs = 20 * 60 * 1000;
+    const cutoff = now - windowMs;
+    const permissionRegex = /\bpermission\b/i;
+    const frictionRegex = /\b(denied|approve|approval|allow)\b/i;
+
+    let signals = 0;
+    for (const message of this.messages) {
+      if (message.timestamp < cutoff) {
+        continue;
+      }
+
+      if (permissionRegex.test(message.content) && frictionRegex.test(message.content)) {
+        signals += 1;
+      }
+
+      for (const toolCall of message.toolCalls ?? []) {
+        const content = `${toolCall.error ?? ""}\n${toolCall.output ?? ""}\n${toolCall.stderr ?? ""}`;
+        if (permissionRegex.test(content) && frictionRegex.test(content)) {
+          signals += 1;
+        }
+      }
+    }
+
+    const slashSignals = (this.plugin.settings.slashCommandEvents || []).reduce((count, event) => {
+      if (event.timestamp < cutoff) {
+        return count;
+      }
+      if (event.commandId === "permissions" && event.action === "executedLocal") {
+        return count + 1;
+      }
+      return count;
+    }, 0);
+
+    return signals + slashSignals;
+  }
+
+  private mergeToolCalls(
+    previous?: ToolCall[],
+    incoming?: ToolCall[]
+  ): ToolCall[] | undefined {
+    const merged = new Map<string, ToolCall>();
+    for (const toolCall of previous ?? []) {
+      merged.set(toolCall.id, toolCall);
+    }
+    for (const toolCall of incoming ?? []) {
+      const existing = merged.get(toolCall.id);
+      merged.set(toolCall.id, existing ? { ...existing, ...toolCall } : toolCall);
+    }
+    return merged.size > 0 ? Array.from(merged.values()) : undefined;
+  }
+
+  private extractContinuationText(content: string): string {
+    const prefix = this.streamingBaseContentPrefix ?? "";
+    if (prefix && content.startsWith(prefix)) {
+      return content.slice(prefix.length).replace(/^\s+/, "");
+    }
+    return content;
   }
 
   private renderMessagesArea() {
@@ -641,9 +797,11 @@ export class ChatView extends ItemView {
     this.chatInput = new ChatInput(this.inputContainerEl, {
       onSend: (message) => this.handleSendMessage(message),
       onCancel: () => this.handleCancelStreaming(),
+      getAdditionalCommandSuggestions: () => this.getSdkSlashCommandSuggestions(),
       onCommand: (command, args) => {
         void this.handleInputCommand(command, args);
       },
+      onPermissionModeChange: () => this.refreshProjectControls(),
       isStreaming: () => this.isStreaming,
       plugin: this.plugin,
     });
@@ -652,12 +810,18 @@ export class ChatView extends ItemView {
   private async handleInputCommand(command: string, args: string[] = []) {
     logger.debug("ChatView", "Handling input command", { command, args });
     switch (command) {
+      case "help":
+        await this.showHelpMessage();
+        break;
       case "new":
       case "clear":
         await this.startNewConversation();
         break;
       case "status":
         await this.showStatusMessage();
+        break;
+      case "doctor":
+        await this.showDoctorMessage();
         break;
       case "cost":
         await this.showCostMessage();
@@ -673,6 +837,9 @@ export class ChatView extends ItemView {
         break;
       case "rename":
         await this.handleRenameConversationCommand(args);
+        break;
+      case "resume":
+        await this.handleResumeConversationCommand(args);
         break;
       case "pin-file":
         await this.handlePinFileCommand();
@@ -712,6 +879,144 @@ export class ChatView extends ItemView {
     }
   }
 
+  private getSdkSlashCommandSuggestions(): Suggestion[] {
+    return getExternalSlashCommandSuggestions(this.agentController.getSupportedCommands());
+  }
+
+  private async showHelpMessage() {
+    const localCommands = getSlashCommands();
+    const sdkCommands = this.agentController.getSupportedCommands();
+    const localByValue = new Set(localCommands.map((cmd) => cmd.command.toLowerCase()));
+    const externalOnly = sdkCommands
+      .map((cmd) => ({
+        name: normalizeSlashCommandName(cmd.name),
+        description: cmd.description,
+        argumentHint: cmd.argumentHint,
+        origin: getExternalSlashCommandOrigin(cmd.name),
+      }))
+      .filter((cmd) => cmd.name && !localByValue.has(cmd.name.toLowerCase()));
+    const discoveredModels = this.agentController.getSupportedModels();
+    const supportedModels = discoveredModels.length > 0 ? discoveredModels : ["sonnet", "opus", "haiku"];
+    const topSlashCommands = this.plugin.getTopSlashCommands(24, 5);
+    const activeMcpServers = this.plugin.settings.additionalMcpServers
+      .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
+      .map((server) => server.name);
+    const pendingMcpApprovals = this.plugin.settings.additionalMcpServers.filter(
+      (server) => server.enabled && !this.plugin.settings.approvedMcpServers.includes(server.name)
+    ).length;
+
+    const localById = new Map(localCommands.map((command) => [command.id, command]));
+    const commandGroups: Array<{ title: string; ids: string[] }> = [
+      {
+        title: "Session & Diagnostics",
+        ids: ["help", "status", "doctor", "cost", "usage", "context", "model", "permissions", "mcp", "logs"],
+      },
+      {
+        title: "Conversation",
+        ids: ["new", "clear", "rename", "resume", "checkpoint", "rewind"],
+      },
+      {
+        title: "Context Pinning",
+        ids: ["file", "pin-file", "pin-selection", "pin-backlinks", "pins", "clear-pins"],
+      },
+    ];
+
+    const renderedLocal = new Set<string>();
+    const lines: string[] = [
+      "Use `/` to open command suggestions in the composer.",
+      "",
+      "#### Quick Start",
+      `- Current model: \`${this.plugin.settings.model}\` (available: \`${supportedModels.join(", ")}\`)`,
+      `- Permission mode: \`${this.plugin.settings.permissionMode}\``,
+      `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
+      pendingMcpApprovals > 0
+        ? `- MCP approvals pending: \`${pendingMcpApprovals}\` (run \`/mcp\`)`
+        : "- MCP approvals pending: `none`",
+      topSlashCommands.length > 0
+        ? `- Top commands (24h): \`${topSlashCommands.map((entry) => `${entry.command} (${entry.total})`).join(", ")}\``
+        : "- Top commands (24h): `none yet`",
+      "",
+      "#### Keyboard Controls",
+      "- `ArrowUp`/`ArrowDown`: move through autocomplete suggestions.",
+      "- `Enter`: fill selected suggestion; press `Enter` again to run/send.",
+      "- `Tab`: fill selected suggestion without sending.",
+      "- `Shift+Tab`: cycle permission mode (Ask to Accept -> Auto Accept Edits -> Plan).",
+      "- `Esc`: close autocomplete (or stop active stream).",
+      "",
+      "#### Local Commands",
+    ];
+
+    for (const group of commandGroups) {
+      const groupCommands = group.ids
+        .map((id) => localById.get(id))
+        .filter((command): command is NonNullable<typeof command> => !!command);
+      if (groupCommands.length === 0) continue;
+
+      lines.push(`- ${group.title}`);
+      for (const command of groupCommands) {
+        renderedLocal.add(command.id);
+        lines.push(`  - ${this.formatHelpCommand(command.command, command.argumentHint, command.description)}`);
+      }
+    }
+
+    const remainingLocal = localCommands.filter(
+      (command) => !renderedLocal.has(command.id) && command.handler === "local"
+    );
+    if (remainingLocal.length > 0) {
+      lines.push("- Other local commands");
+      for (const command of remainingLocal) {
+        lines.push(`  - ${this.formatHelpCommand(command.command, command.argumentHint, command.description)}`);
+      }
+    }
+
+    const passthroughCommands = localCommands.filter((command) => command.handler === "sendToClaude");
+    if (passthroughCommands.length > 0) {
+      lines.push("");
+      lines.push("#### Claude-Passthrough Commands");
+      for (const command of passthroughCommands) {
+        lines.push(`- ${this.formatHelpCommand(command.command, command.argumentHint, command.description)}`);
+      }
+    }
+
+    lines.push("");
+    lines.push("#### Discovered Claude Commands");
+    if (externalOnly.length === 0) {
+      lines.push("- `none discovered yet` (send one message to load SDK command metadata).");
+    } else {
+      const origins: Array<"sdk" | "project" | "personal" | "mcp"> = ["sdk", "project", "personal", "mcp"];
+      const labels: Record<"sdk" | "project" | "personal" | "mcp", string> = {
+        sdk: "Built-in",
+        project: "Project custom",
+        personal: "Personal custom",
+        mcp: "MCP",
+      };
+      for (const origin of origins) {
+        const commands = externalOnly.filter((cmd) => cmd.origin === origin);
+        if (commands.length === 0) continue;
+        lines.push(`- ${labels[origin]}`);
+        for (const command of commands) {
+          const usage = command.argumentHint ? `${command.name} ${command.argumentHint}` : command.name;
+          lines.push(`  - \`${usage}\` - ${command.description || "Claude command"}`);
+        }
+      }
+    }
+
+    lines.push("");
+    lines.push("#### Examples");
+    lines.push("- `@[[Daily.md]] Summarize key tasks and blockers`");
+    lines.push("- `/model opus`");
+    lines.push("- `/permissions`");
+    lines.push("- `/resume 2`");
+    lines.push("- `/search backlinks for this note`");
+
+    await this.appendLocalAssistantMessage("Help", lines.join("\n"));
+  }
+
+  private formatHelpCommand(command: string, argumentHint: string | undefined, description: string): string {
+    const usage = argumentHint ? `${command} ${argumentHint}` : command;
+    return `\`${usage}\` - ${description}`;
+  }
+
   private formatUsageTime(iso?: string) {
     if (!iso) return "unknown";
     const dt = new Date(iso);
@@ -724,6 +1029,8 @@ export class ChatView extends ItemView {
     const auth = this.plugin.getAuthStatus();
     const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
     const planErr = this.plugin.getClaudeAiPlanUsageError();
+    const slashSummary = this.plugin.getSlashCommandEventSummary(24);
+    const topSlashCommands = this.plugin.getTopSlashCommands(24, 5);
     const activeMcpServers = this.plugin.settings.additionalMcpServers
       .filter((server) => server.enabled && this.plugin.settings.approvedMcpServers.includes(server.name))
       .map((server) => server.name);
@@ -747,10 +1054,86 @@ export class ChatView extends ItemView {
         ? `  - 7d: \`${(plan.sevenDayUtilizationPercent ?? 0).toFixed(0)}%\` (resets \`${this.formatUsageTime(plan.sevenDayResetsAt)}\`)`
         : "",
       planErr ? `  - Last plan usage error: \`${planErr}\`` : "",
+      `- Slash commands (24h): \`${slashSummary.total}\` total (\`${slashSummary.selected}\` selected, \`${slashSummary.executedLocal}\` local exec, \`${slashSummary.submittedToClaude}\` sent to Claude)`,
+      topSlashCommands.length > 0
+        ? `- Top slash commands (24h): \`${topSlashCommands.map((entry) => `${entry.command} (${entry.total})`).join(", ")}\``
+        : "- Top slash commands (24h): `none`",
       `- Active MCP servers: \`${activeMcpServers.length > 0 ? activeMcpServers.join(", ") : "obsidian"}\``,
     ].filter(Boolean);
 
     await this.appendLocalAssistantMessage("Session Status", lines.join("\n"));
+  }
+
+  private async showDoctorMessage() {
+    await this.plugin.refreshClaudeAiPlanUsageIfStale(0, { allowWhenBudget: true });
+
+    const auth = this.plugin.getAuthStatus();
+    const conv = this.conversationManager.getCurrentConversation();
+    const sessionId = this.agentController.getSessionId();
+    const supportedModels = this.agentController.getSupportedModels();
+    const supportedCommands = this.agentController.getSupportedCommands();
+    const plan = this.plugin.getClaudeAiPlanUsageSnapshot();
+    const planErr = this.plugin.getClaudeAiPlanUsageError();
+    const approvedMcp = new Set(this.plugin.settings.approvedMcpServers);
+    const activeMcpServers = this.plugin.settings.additionalMcpServers.filter(
+      (server) => server.enabled && approvedMcp.has(server.name)
+    );
+    const pendingMcpApprovals = this.plugin.settings.additionalMcpServers.filter(
+      (server) => server.enabled && !approvedMcp.has(server.name)
+    );
+    const disabledMcpServers = this.plugin.settings.additionalMcpServers.filter((server) => !server.enabled);
+    const contextWindow = this.getModelContextWindow(this.plugin.settings.model);
+    const contextEstimate = computeContextUsageEstimate({
+      contextWindow,
+      metadata: conv?.metadata,
+      history: this.conversationManager.getHistory(),
+      pinnedContext: this.conversationManager.getPinnedContext(),
+    });
+    const permissionSignals = this.getPermissionPromptSignals(Date.now());
+    const currentModel = this.plugin.settings.model;
+    const modelStatus = supportedModels.length === 0
+      ? "unknown (SDK metadata not loaded yet)"
+      : supportedModels.includes(currentModel)
+        ? "supported"
+        : "not in discovered model list";
+
+    const recommendations: string[] = [];
+    if (!auth.hasEnvApiKey && !auth.hasStoredApiKey && !auth.hasOAuthToken) {
+      recommendations.push("- Configure API key or OAuth in settings.");
+    }
+    if (!sessionId) {
+      recommendations.push("- Send one message to initialize a Claude session.");
+    }
+    if (contextEstimate.percentUsed >= 80) {
+      recommendations.push("- Context is high. Run `/context` and trim with `/clear-pins`.");
+    }
+    if (pendingMcpApprovals.length > 0) {
+      recommendations.push("- MCP approvals pending. Run `/mcp` and approve needed servers.");
+    }
+    if (permissionSignals >= 2 && this.plugin.settings.permissionMode === "default") {
+      recommendations.push("- Permission prompts are repeating. Review `/permissions`.");
+    }
+    if (planErr) {
+      recommendations.push("- Plan usage fetch has errors. Run `/usage` for details.");
+    }
+
+    const lines = [
+      "- Summary",
+      `- Auth: \`${auth.label}\``,
+      `- Session: \`${sessionId ? "connected" : "not connected"}\``,
+      `- Model: \`${currentModel}\` (${modelStatus})`,
+      `- Permission mode: \`${this.plugin.settings.permissionMode}\``,
+      `- Context usage: \`${contextEstimate.percentUsed.toFixed(0)}%\``,
+      `- SDK metadata: \`${supportedModels.length}\` models, \`${supportedCommands.length}\` commands`,
+      `- MCP: \`${activeMcpServers.length}\` active, \`${pendingMcpApprovals.length}\` pending approval, \`${disabledMcpServers.length}\` disabled`,
+      `- Plan usage data: \`${plan ? "available" : "unavailable"}\`${planErr ? ` (error: ${planErr})` : ""}`,
+      "",
+      "- Recommended actions",
+      ...(recommendations.length > 0 ? recommendations : ["- No blocking issues detected."]),
+      "- Run `/status` for full session details.",
+    ];
+
+    await this.appendLocalAssistantMessage("Doctor", lines.join("\n"));
   }
 
   private async showUsageMessage() {
@@ -886,6 +1269,91 @@ export class ChatView extends ItemView {
     await this.appendLocalAssistantMessage("Conversation", `Renamed conversation to \`${requested}\`.`);
   }
 
+  private async handleResumeConversationCommand(args: string[]) {
+    const conversations = await this.conversationManager.getConversations();
+    if (conversations.length === 0) {
+      await this.appendLocalAssistantMessage(
+        "Resume Conversation",
+        "No saved conversations found yet."
+      );
+      return;
+    }
+
+    const currentId = this.conversationManager.getCurrentConversation()?.id;
+    const recent = conversations.slice(0, 12);
+    const query = args.join(" ").trim();
+
+    if (!query) {
+      this.openResumeConversationModal(conversations, "");
+      return;
+    }
+
+    let target: Conversation | undefined;
+    if (/^\d+$/.test(query)) {
+      const index = Number.parseInt(query, 10);
+      if (index >= 1 && index <= recent.length) {
+        target = recent[index - 1];
+      }
+    }
+
+    if (!target) {
+      target = conversations.find((conversation) => conversation.id === query);
+    }
+
+    if (!target) {
+      const normalizedQuery = query.toLowerCase();
+      target = conversations.find((conversation) => (conversation.title || "").toLowerCase() === normalizedQuery);
+    }
+
+    if (!target) {
+      const normalizedQuery = query.toLowerCase();
+      const titleMatches = conversations.filter((conversation) =>
+        (conversation.title || "").toLowerCase().includes(normalizedQuery)
+      );
+
+      if (titleMatches.length === 1) {
+        target = titleMatches[0];
+      } else if (titleMatches.length > 1) {
+        new Notice(`Multiple matches for "${query}". Select a conversation in the picker.`);
+        this.openResumeConversationModal(conversations, query);
+        return;
+      }
+    }
+
+    if (!target) {
+      new Notice(`No exact match for "${query}". Select from filtered conversations.`);
+      this.openResumeConversationModal(conversations, query);
+      return;
+    }
+
+    if (target.id === currentId) {
+      new Notice(`Already in "${target.title || "Untitled"}".`);
+      return;
+    }
+
+    await this.loadConversation(target.id);
+    new Notice(`Resumed "${target.title || "Untitled"}".`);
+  }
+
+  private openResumeConversationModal(conversations: Conversation[], initialQuery = "") {
+    const currentId = this.conversationManager.getCurrentConversation()?.id ?? null;
+    const modal = new ResumeConversationModal(
+      this.app,
+      conversations,
+      currentId,
+      async (conversation) => {
+        if (conversation.id === currentId) {
+          new Notice(`Already in "${conversation.title || "Untitled"}".`);
+          return;
+        }
+        await this.loadConversation(conversation.id);
+        new Notice(`Resumed "${conversation.title || "Untitled"}".`);
+      },
+      initialQuery
+    );
+    modal.open();
+  }
+
   private async handlePinFileCommand() {
     const file = this.app.workspace.getActiveFile();
     if (!file) {
@@ -986,7 +1454,8 @@ export class ChatView extends ItemView {
   }
 
   private async handleModelCommand(args: string[]) {
-    const supportedModels = ["sonnet", "opus", "haiku"];
+    const discoveredModels = this.agentController.getSupportedModels();
+    const supportedModels = discoveredModels.length > 0 ? discoveredModels : ["sonnet", "opus", "haiku"];
     const requestedModel = args[0]?.toLowerCase();
 
     if (!requestedModel) {
@@ -1216,6 +1685,9 @@ export class ChatView extends ItemView {
     // Store for retry functionality.
     this.lastUserMessage = content.trim();
     const shouldPin = this.isNearBottom();
+    // Lock streaming immediately to prevent rapid double-submit races.
+    this.isStreaming = true;
+    this.chatInput.updateState();
 
     // Add user message to UI.
     const userMessage: ChatMessage = {
@@ -1252,10 +1724,6 @@ export class ChatView extends ItemView {
       this.scrollToBottom();
     }
 
-    // Start streaming.
-    this.isStreaming = true;
-    this.chatInput.updateState();
-
     // Immediately show a "thinking" placeholder message for instant feedback.
     const placeholderId = this.generateId();
     const placeholderMessage: ChatMessage = {
@@ -1267,6 +1735,8 @@ export class ChatView extends ItemView {
     };
     this.messages.push(placeholderMessage);
     this.streamingMessageId = placeholderId;
+    this.streamingTextMessageId = placeholderId;
+    this.streamingBaseContentPrefix = null;
     this.messageList.addMessage(placeholderMessage);
     if (shouldPin) {
       this.scrollToBottom();
@@ -1310,21 +1780,8 @@ export class ChatView extends ItemView {
         }
       }
 
-      // Only update UI if we're still viewing the same conversation.
-      const nowCurrentConv = this.conversationManager.getCurrentConversation();
-      if (nowCurrentConv?.id === streamConvId) {
-        const shouldPinFinal = this.isNearBottom();
-        const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
-        if (streamingIndex !== -1) {
-          this.messages[streamingIndex] = response;
-        } else {
-          this.messages.push(response);
-        }
-        this.messageList.render(this.messages);
-        if (shouldPinFinal) {
-          this.scrollToBottom();
-        }
-      } else {
+      if (!this.finalizeStreamingResponse(streamConvId, streamMsgId, response)) {
+        const nowCurrentConv = this.conversationManager.getCurrentConversation();
         logger.info("ChatView", "Stream completed but user switched conversations", {
           streamConvId,
           currentConvId: nowCurrentConv?.id,
@@ -1353,6 +1810,8 @@ export class ChatView extends ItemView {
       logger.info("ChatView", "handleSendMessage completed");
       this.isStreaming = false;
       this.streamingMessageId = null;
+      this.streamingTextMessageId = null;
+      this.streamingBaseContentPrefix = null;
       this.activeStreamConversationId = null;
       this.chatInput.updateState();
       this.refreshProjectControls();
@@ -1391,13 +1850,101 @@ export class ChatView extends ItemView {
 
     // Update or add streaming message.
     if (this.streamingMessageId) {
-      const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
-      if (index !== -1) {
-        this.messages[index] = { ...message, id: this.streamingMessageId };
-        this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
+      const baseIndex = this.messages.findIndex((m) => m.id === this.streamingMessageId);
+      if (baseIndex !== -1) {
+        const basePrevious = this.messages[baseIndex];
+        const mergedToolCalls = this.mergeToolCalls(basePrevious.toolCalls, message.toolCalls);
+        const mergedContent = mergeStreamingText(basePrevious.content, message.content);
+        const splitActive =
+          this.streamingTextMessageId !== null &&
+          this.streamingTextMessageId !== this.streamingMessageId &&
+          this.streamingBaseContentPrefix !== null;
+
+        if (!splitActive) {
+          const shouldSplit =
+            !!mergedToolCalls &&
+            mergedToolCalls.length > 0 &&
+            mergedContent.length > basePrevious.content.length &&
+            (basePrevious.content.length === 0 || mergedContent.startsWith(basePrevious.content));
+
+          if (shouldSplit) {
+            const continuationText = mergedContent.slice(basePrevious.content.length).replace(/^\s+/, "");
+            this.messages[baseIndex] = {
+              ...basePrevious,
+              ...message,
+              id: this.streamingMessageId,
+              content: basePrevious.content,
+              toolCalls: mergedToolCalls,
+              isStreaming: true,
+            };
+            this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
+
+            if (continuationText.trim().length > 0) {
+              const continuationId = this.generateId();
+              this.streamingTextMessageId = continuationId;
+              this.streamingBaseContentPrefix = basePrevious.content;
+              const continuationMessage: ChatMessage = {
+                id: continuationId,
+                role: "assistant",
+                content: continuationText,
+                timestamp: Date.now(),
+                isStreaming: true,
+              };
+              this.messages.push(continuationMessage);
+              this.messageList.addMessage(continuationMessage);
+            }
+          } else {
+            this.messages[baseIndex] = {
+              ...basePrevious,
+              ...message,
+              id: this.streamingMessageId,
+              content: mergedContent,
+              toolCalls: mergedToolCalls,
+              isStreaming: true,
+            };
+            this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
+          }
+        } else {
+          this.messages[baseIndex] = {
+            ...basePrevious,
+            ...message,
+            id: this.streamingMessageId,
+            content: basePrevious.content,
+            toolCalls: mergedToolCalls,
+            isStreaming: true,
+          };
+          this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
+
+          if (this.streamingTextMessageId) {
+            const textIndex = this.messages.findIndex((m) => m.id === this.streamingTextMessageId);
+            const continuationText = this.extractContinuationText(message.content);
+            if (textIndex !== -1 && continuationText.trim().length > 0) {
+              const textPrevious = this.messages[textIndex];
+              this.messages[textIndex] = {
+                ...textPrevious,
+                content: continuationText,
+                timestamp: Date.now(),
+                isStreaming: true,
+              };
+              this.messageList.updateMessage(this.streamingTextMessageId, this.messages[textIndex]);
+            } else if (textIndex === -1 && continuationText.trim().length > 0) {
+              const continuationMessage: ChatMessage = {
+                id: this.streamingTextMessageId,
+                role: "assistant",
+                content: continuationText,
+                timestamp: Date.now(),
+                isStreaming: true,
+              };
+              this.messages.push(continuationMessage);
+              this.messageList.addMessage(continuationMessage);
+            }
+          }
+        }
       }
     } else {
       this.streamingMessageId = message.id;
+      this.streamingTextMessageId = message.id;
+      this.streamingBaseContentPrefix = null;
       this.messages.push(message);
       this.messageList.addMessage(message);
     }
@@ -1544,6 +2091,8 @@ export class ChatView extends ItemView {
     this.agentController.cancelStream();
     this.isStreaming = false;
     this.streamingMessageId = null;
+    this.streamingTextMessageId = null;
+    this.streamingBaseContentPrefix = null;
     this.chatInput.updateState();
   }
 
@@ -1651,6 +2200,8 @@ export class ChatView extends ItemView {
     };
     this.messages.push(placeholderMessage);
     this.streamingMessageId = placeholderId;
+    this.streamingTextMessageId = placeholderId;
+    this.streamingBaseContentPrefix = null;
     this.messageList.render(this.messages);
     if (shouldPin) {
       this.scrollToBottom();
@@ -1692,21 +2243,7 @@ export class ChatView extends ItemView {
         }
       }
 
-      // Only update UI if we're still viewing the same conversation.
-      const nowCurrentConv = this.conversationManager.getCurrentConversation();
-      if (nowCurrentConv?.id === streamConvId) {
-        const shouldPinFinal = this.isNearBottom();
-        const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
-        if (streamingIndex !== -1) {
-          this.messages[streamingIndex] = response;
-        } else {
-          this.messages.push(response);
-        }
-        this.messageList.render(this.messages);
-        if (shouldPinFinal) {
-          this.scrollToBottom();
-        }
-      }
+      this.finalizeStreamingResponse(streamConvId, streamMsgId, response);
     } catch (error) {
       const errorMessage = String(error);
       const isAbort = (error as Error).name === "AbortError" || errorMessage.includes("aborted") || this.isCancelling;
@@ -1726,10 +2263,68 @@ export class ChatView extends ItemView {
     } finally {
       this.isStreaming = false;
       this.streamingMessageId = null;
+      this.streamingTextMessageId = null;
+      this.streamingBaseContentPrefix = null;
       this.activeStreamConversationId = null;
       this.chatInput.updateState();
       this.refreshProjectControls();
     }
+  }
+
+  private finalizeStreamingResponse(streamConvId: string | null, streamMsgId: string | null, response: ChatMessage): boolean {
+    const nowCurrentConv = this.conversationManager.getCurrentConversation();
+    if (nowCurrentConv?.id !== streamConvId) {
+      return false;
+    }
+
+    const shouldPinFinal = this.isNearBottom();
+    const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
+    const splitTextId = this.streamingTextMessageId;
+    const hasSplit = !!splitTextId && splitTextId !== streamMsgId && this.streamingBaseContentPrefix !== null;
+
+    if (streamingIndex !== -1) {
+      const previous = this.messages[streamingIndex];
+      this.messages[streamingIndex] = {
+        ...response,
+        id: previous.id,
+        content: hasSplit ? previous.content : mergeStreamingText(previous.content, response.content),
+        toolCalls: this.mergeToolCalls(previous.toolCalls, response.toolCalls),
+        isStreaming: false,
+      };
+    } else if (!hasSplit) {
+      this.messages.push(response);
+    }
+
+    if (hasSplit) {
+      const continuationText = this.extractContinuationText(response.content).trim();
+      if (continuationText.length > 0 && splitTextId) {
+        const textIndex = this.messages.findIndex((m) => m.id === splitTextId);
+        if (textIndex !== -1) {
+          const previousText = this.messages[textIndex];
+          this.messages[textIndex] = {
+            ...previousText,
+            content: continuationText,
+            isStreaming: false,
+            timestamp: Date.now(),
+          };
+        } else {
+          this.messages.push({
+            id: splitTextId,
+            role: "assistant",
+            content: continuationText,
+            timestamp: Date.now(),
+            isStreaming: false,
+          });
+        }
+      }
+    }
+
+    this.messageList.render(this.messages);
+    if (shouldPinFinal) {
+      this.scrollToBottom();
+    }
+
+    return true;
   }
 
   async startNewConversation() {
@@ -1741,6 +2336,8 @@ export class ChatView extends ItemView {
 
     // Clear UI streaming state (but stream continues in background).
     this.streamingMessageId = null;
+    this.streamingTextMessageId = null;
+    this.streamingBaseContentPrefix = null;
     this.isStreaming = false;
 
     // Clear state.

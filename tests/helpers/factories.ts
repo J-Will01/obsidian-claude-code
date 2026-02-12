@@ -33,6 +33,7 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     additionalMcpServers: [],
     approvedMcpServers: [],
     usageEvents: [],
+    slashCommandEvents: [],
   };
 
   // Extract settings from overrides to merge separately.
@@ -55,11 +56,19 @@ export function createMockPlugin(overrides?: Partial<MockPlugin>): MockPlugin {
     saveData: vi.fn().mockResolvedValue(undefined),
     saveSettings: vi.fn().mockResolvedValue(undefined),
     recordUsageEvent: vi.fn().mockResolvedValue(undefined),
+    recordSlashCommandEvent: vi.fn().mockResolvedValue(undefined),
     getRollingUsageSummary: vi.fn().mockReturnValue({
       costUsd: 0,
       inputTokens: 0,
       outputTokens: 0,
     }),
+    getSlashCommandEventSummary: vi.fn().mockReturnValue({
+      total: 0,
+      selected: 0,
+      executedLocal: 0,
+      submittedToClaude: 0,
+    }),
+    getTopSlashCommands: vi.fn().mockReturnValue([]),
     getApiKey: vi.fn().mockReturnValue((settingsOverrides?.apiKey ?? defaultSettings.apiKey)),
     getOAuthToken: vi.fn().mockReturnValue((settingsOverrides?.oauthToken ?? defaultSettings.oauthToken)),
     ...otherOverrides,
@@ -92,6 +101,16 @@ export interface MockPluginSettings {
   additionalMcpServers: { name: string; command: string; args: string[]; env?: Record<string, string>; enabled: boolean }[];
   approvedMcpServers: string[];
   usageEvents: Array<{ timestamp: number; costUsd: number; inputTokens: number; outputTokens: number }>;
+  slashCommandEvents: Array<{
+    timestamp: number;
+    commandId: string;
+    command: string;
+    telemetryKey: string;
+    handler: "local" | "sendToClaude";
+    action: "selected" | "executedLocal" | "submittedToClaude";
+    source: "typed" | "autocomplete";
+    argsCount: number;
+  }>;
 }
 
 export interface MockPlugin {
@@ -111,7 +130,10 @@ export interface MockPlugin {
   saveData: ReturnType<typeof vi.fn>;
   saveSettings: ReturnType<typeof vi.fn>;
   recordUsageEvent: ReturnType<typeof vi.fn>;
+  recordSlashCommandEvent: ReturnType<typeof vi.fn>;
   getRollingUsageSummary: ReturnType<typeof vi.fn>;
+  getSlashCommandEventSummary: ReturnType<typeof vi.fn>;
+  getTopSlashCommands: ReturnType<typeof vi.fn>;
   getApiKey: ReturnType<typeof vi.fn>;
   getOAuthToken: ReturnType<typeof vi.fn>;
 }

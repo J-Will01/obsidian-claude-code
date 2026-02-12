@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
-import { classifyError } from "@/agent/AgentController";
+import { AgentController, classifyError } from "@/agent/AgentController";
+import { createMockPlugin } from "../../helpers/factories";
 
 describe("classifyError", () => {
   describe("transient errors", () => {
@@ -144,5 +145,33 @@ describe("classifyError", () => {
       const error = new Error("unauthorized network error");
       expect(classifyError(error)).toBe("auth");
     });
+  });
+});
+
+describe("AgentController capabilities cache", () => {
+  it("should return copies of supported model and command caches", () => {
+    const plugin = createMockPlugin();
+    const controller = new AgentController(plugin as any);
+
+    (controller as any).supportedModelsCache = ["sonnet", "opus"];
+    (controller as any).supportedCommandsCache = [
+      { name: "status", description: "Show status", argumentHint: "" },
+    ];
+
+    const models = controller.getSupportedModels();
+    const commands = controller.getSupportedCommands();
+
+    expect(models).toEqual(["sonnet", "opus"]);
+    expect(commands).toEqual([
+      { name: "status", description: "Show status", argumentHint: "" },
+    ]);
+
+    models.push("haiku");
+    commands.push({ name: "new", description: "", argumentHint: "" });
+
+    expect(controller.getSupportedModels()).toEqual(["sonnet", "opus"]);
+    expect(controller.getSupportedCommands()).toEqual([
+      { name: "status", description: "Show status", argumentHint: "" },
+    ]);
   });
 });

@@ -149,6 +149,32 @@ describe("AgentController SDK Integration", () => {
       expect(result.toolCalls![0].status).toBe("success");
       expect(result.toolCalls![0].endTime).toBeDefined();
     });
+
+    it("should preserve assistant transcript order across tool-call phases", async () => {
+      const messages: SDKMessage[] = [
+        createSystemInitMessage("session-123"),
+        createAssistantMessage("I will inspect the file first."),
+        createToolUseMessage("Read", { file_path: "/notes.md" }, "tool-read-1"),
+        createAssistantMessage("After reading, here is the summary."),
+        createSuccessResultMessage(2, 0.02, "After reading, here is the summary."),
+      ];
+
+      testHarness = await createTestAgentController({ queryMessages: messages });
+      const { controller, eventSpies } = testHarness;
+
+      const result = await controller.sendMessage("Summarize notes");
+
+      expect(result.toolCalls).toBeDefined();
+      expect(result.toolCalls?.length).toBe(1);
+      expect(result.toolCalls?.[0].name).toBe("Read");
+      expect(result.content).toContain("I will inspect the file first.");
+      expect(result.content).toContain("After reading, here is the summary.");
+      expect(result.content.indexOf("I will inspect the file first."))
+        .toBeLessThan(result.content.indexOf("After reading, here is the summary."));
+
+      const finalOnMessage = eventSpies.onMessage.mock.calls[eventSpies.onMessage.mock.calls.length - 1]?.[0];
+      expect(finalOnMessage.content).toBe(result.content);
+    });
   });
 
   describe("session management", () => {

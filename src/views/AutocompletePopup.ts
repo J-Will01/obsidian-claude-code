@@ -8,6 +8,10 @@ import {
   type Suggestion,
 } from "../utils/autocomplete";
 
+interface AutocompletePopupOptions {
+  getCommandSuggestions?: () => Suggestion[];
+}
+
 export class AutocompletePopup {
   private plugin: ClaudeCodePlugin;
   private containerEl: HTMLElement | null = null;
@@ -15,10 +19,16 @@ export class AutocompletePopup {
   private selectedIndex = 0;
   private onSelect: (suggestion: Suggestion) => void;
   private visible = false;
+  private options: AutocompletePopupOptions;
 
-  constructor(plugin: ClaudeCodePlugin, onSelect: (suggestion: Suggestion) => void) {
+  constructor(
+    plugin: ClaudeCodePlugin,
+    onSelect: (suggestion: Suggestion) => void,
+    options: AutocompletePopupOptions = {}
+  ) {
     this.plugin = plugin;
     this.onSelect = onSelect;
+    this.options = options;
   }
 
   // Show the popup with suggestions.
@@ -34,8 +44,8 @@ export class AutocompletePopup {
     }
 
     this.selectedIndex = 0;
-    this.visible = true;
     this.render(anchorEl);
+    this.visible = true;
   }
 
   // Hide the popup.
@@ -95,7 +105,18 @@ export class AutocompletePopup {
 
   // Get matching slash commands.
   private getCommandSuggestions(query: string): Suggestion[] {
-    return filterCommands(SLASH_COMMANDS, query);
+    const additional = this.options.getCommandSuggestions?.() ?? [];
+    const seen = new Set<string>(SLASH_COMMANDS.map((cmd) => cmd.value.toLowerCase()));
+    const merged = [...SLASH_COMMANDS];
+
+    for (const cmd of additional) {
+      const key = cmd.value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(cmd);
+    }
+
+    return filterCommands(merged, query);
   }
 
   // Get matching files from vault.
@@ -154,7 +175,12 @@ export class AutocompletePopup {
 
       // Content.
       const contentEl = itemEl.createDiv({ cls: "claude-code-autocomplete-content" });
-      contentEl.createDiv({ cls: "claude-code-autocomplete-label", text: suggestion.label });
+      const labelEl = contentEl.createDiv({ cls: "claude-code-autocomplete-label" });
+      labelEl.setText(suggestion.label);
+      if (suggestion.type === "command" && suggestion.origin) {
+        const originEl = labelEl.createSpan({ cls: "claude-code-autocomplete-origin" });
+        originEl.setText(suggestion.origin.toUpperCase());
+      }
       if (suggestion.description) {
         contentEl.createDiv({ cls: "claude-code-autocomplete-desc", text: suggestion.description });
       }
