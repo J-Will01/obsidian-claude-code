@@ -64,6 +64,15 @@ const COMMAND_DEFINITIONS: SlashCommandDefinition[] = [
     telemetryKey: "slash_rename",
   },
   {
+    id: "resume",
+    command: "/resume",
+    description: "List recent conversations or resume one",
+    argumentHint: "[index|id|title]",
+    icon: "history",
+    handler: "local",
+    telemetryKey: "slash_resume",
+  },
+  {
     id: "pin-file",
     command: "/pin-file",
     description: "Pin active file contents into prompt context",

@@ -837,6 +837,9 @@ export class ChatView extends ItemView {
       case "rename":
         await this.handleRenameConversationCommand(args);
         break;
+      case "resume":
+        await this.handleResumeConversationCommand(args);
+        break;
       case "pin-file":
         await this.handlePinFileCommand();
         break;
@@ -909,7 +912,7 @@ export class ChatView extends ItemView {
       },
       {
         title: "Conversation",
-        ids: ["new", "clear", "rename", "checkpoint", "rewind"],
+        ids: ["new", "clear", "rename", "resume", "checkpoint", "rewind"],
       },
       {
         title: "Context Pinning",
@@ -1262,6 +1265,94 @@ export class ChatView extends ItemView {
     (this.leaf as any).updateHeader?.();
     this.updateConversationDisplay();
     await this.appendLocalAssistantMessage("Conversation", `Renamed conversation to \`${requested}\`.`);
+  }
+
+  private async handleResumeConversationCommand(args: string[]) {
+    const conversations = await this.conversationManager.getConversations();
+    if (conversations.length === 0) {
+      await this.appendLocalAssistantMessage(
+        "Resume Conversation",
+        "No saved conversations found yet."
+      );
+      return;
+    }
+
+    const currentId = this.conversationManager.getCurrentConversation()?.id;
+    const recent = conversations.slice(0, 12);
+    const query = args.join(" ").trim();
+
+    if (!query) {
+      const lines = [
+        "Use `/resume <number|id|title>` to switch conversations.",
+        "",
+        "Recent conversations:",
+        ...recent.map((conversation, index) => {
+          const marker = conversation.id === currentId ? " (current)" : "";
+          return `${index + 1}. \`${conversation.title || "Untitled"}\`${marker} - ${new Date(conversation.updatedAt).toLocaleString()}`;
+        }),
+      ];
+      if (conversations.length > recent.length) {
+        lines.push(`...and ${conversations.length - recent.length} more in history.`);
+      }
+      await this.appendLocalAssistantMessage("Resume Conversation", lines.join("\n"));
+      return;
+    }
+
+    let target: Conversation | undefined;
+    if (/^\d+$/.test(query)) {
+      const index = Number.parseInt(query, 10);
+      if (index >= 1 && index <= recent.length) {
+        target = recent[index - 1];
+      }
+    }
+
+    if (!target) {
+      target = conversations.find((conversation) => conversation.id === query);
+    }
+
+    if (!target) {
+      const normalizedQuery = query.toLowerCase();
+      target = conversations.find((conversation) => (conversation.title || "").toLowerCase() === normalizedQuery);
+    }
+
+    if (!target) {
+      const normalizedQuery = query.toLowerCase();
+      const titleMatches = conversations.filter((conversation) =>
+        (conversation.title || "").toLowerCase().includes(normalizedQuery)
+      );
+
+      if (titleMatches.length === 1) {
+        target = titleMatches[0];
+      } else if (titleMatches.length > 1) {
+        const lines = [
+          `Found multiple matches for \`${query}\`. Use a number or more specific title:`,
+          "",
+          ...titleMatches.slice(0, 8).map((conversation) => {
+            const displayIndex = recent.findIndex((item) => item.id === conversation.id);
+            const indexHint = displayIndex >= 0 ? `${displayIndex + 1}. ` : "- ";
+            return `${indexHint}\`${conversation.title || "Untitled"}\` (\`${conversation.id}\`)`;
+          }),
+        ];
+        await this.appendLocalAssistantMessage("Resume Conversation", lines.join("\n"));
+        return;
+      }
+    }
+
+    if (!target) {
+      await this.appendLocalAssistantMessage(
+        "Resume Conversation",
+        `No conversation matched \`${query}\`. Run \`/resume\` to view recent options.`
+      );
+      return;
+    }
+
+    if (target.id === currentId) {
+      new Notice(`Already in "${target.title || "Untitled"}".`);
+      return;
+    }
+
+    await this.loadConversation(target.id);
+    new Notice(`Resumed "${target.title || "Untitled"}".`);
   }
 
   private async handlePinFileCommand() {

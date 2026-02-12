@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Richer `/help` output with grouped command catalog, discovered command origins, keyboard guidance, and examples.
 - Contextual input hint chips with deterministic rules (context pressure, usage pressure, permission friction, MCP approval prompts).
 - `Shift+Tab` permission-mode cycling in chat input (`default` -> `acceptEdits` -> `plan` -> `default`).
+- Local `/resume` command to list recent conversations and resume by index, ID, or title from the composer.
 
 ### Changed
 - Slash command autocomplete selection now fills the input first (including `Tab`) and requires submit to execute/send.

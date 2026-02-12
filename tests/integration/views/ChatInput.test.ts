@@ -868,5 +868,24 @@ describe("ChatInput", () => {
       expect(onCommand).toHaveBeenCalledWith("rename", ["Sprint", "planning"]);
       expect(onSend).not.toHaveBeenCalled();
     });
+
+    it("should pass args for typed /resume command", () => {
+      const plugin = createMockPlugin();
+      const onCommand = vi.fn();
+      new ChatInput(container, {
+        onSend,
+        onCancel,
+        isStreaming,
+        onCommand,
+        plugin: plugin as any,
+      });
+
+      const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+      type(textarea, "/resume 3");
+      pressEnter(textarea);
+
+      expect(onCommand).toHaveBeenCalledWith("resume", ["3"]);
+      expect(onSend).not.toHaveBeenCalled();
+    });
   });
 });
