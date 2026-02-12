@@ -1812,7 +1812,7 @@ export class ChatView extends ItemView {
               const previousText = this.messages[textIndex];
               this.messages[textIndex] = {
                 ...previousText,
-                content: mergeStreamingText(previousText.content, continuationText),
+                content: continuationText,
                 isStreaming: false,
                 timestamp: Date.now(),
               };
@@ -1972,11 +1972,21 @@ export class ChatView extends ItemView {
               const textPrevious = this.messages[textIndex];
               this.messages[textIndex] = {
                 ...textPrevious,
-                content: mergeStreamingText(textPrevious.content, continuationText),
+                content: continuationText,
                 timestamp: Date.now(),
                 isStreaming: true,
               };
               this.messageList.updateMessage(this.streamingTextMessageId, this.messages[textIndex]);
+            } else if (textIndex === -1 && continuationText.trim().length > 0) {
+              const continuationMessage: ChatMessage = {
+                id: this.streamingTextMessageId,
+                role: "assistant",
+                content: continuationText,
+                timestamp: Date.now(),
+                isStreaming: true,
+              };
+              this.messages.push(continuationMessage);
+              this.messageList.addMessage(continuationMessage);
             }
           }
         }
@@ -2315,7 +2325,7 @@ export class ChatView extends ItemView {
               const previousText = this.messages[textIndex];
               this.messages[textIndex] = {
                 ...previousText,
-                content: mergeStreamingText(previousText.content, continuationText),
+                content: continuationText,
                 isStreaming: false,
                 timestamp: Date.now(),
               };

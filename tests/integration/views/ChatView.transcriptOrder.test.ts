@@ -133,7 +133,7 @@ describe("ChatView transcript ordering", () => {
     expect(view.messages).toHaveLength(2);
     expect(view.messages[0].content).toBe("I can look this up.");
     expect(view.messages[0].toolCalls?.[0]?.id).toBe("tool-2");
-    expect(view.messages[1].content).toContain("Here are the first findings.");
+    expect(view.messages[1].content).toBe("Here are the first findings.");
 
     view.handleStreamingMessage({
       id: baseId,
@@ -145,7 +145,47 @@ describe("ChatView transcript ordering", () => {
     });
 
     expect(view.messages[0].content).toBe("I can look this up.");
-    expect(view.messages[1].content).toContain("More detail from sources.");
+    expect(view.messages[1].content).toBe("Here are the first findings. More detail from sources.");
+  });
+
+  it("does not duplicate continuation text when snapshots arrive with different spacing", () => {
+    const view = createStreamingViewHarness();
+    const baseId = "stream-base";
+    const toolCall = createToolCall("tool-3");
+
+    view.messages.push({
+      id: baseId,
+      role: "assistant",
+      content: "Preface before tool.",
+      timestamp: Date.now(),
+      isStreaming: true,
+    });
+    view.streamingMessageId = baseId;
+    view.streamingTextMessageId = baseId;
+    view.streamingBaseContentPrefix = null;
+
+    view.handleToolCall(toolCall);
+    view.handleStreamingMessage({
+      id: baseId,
+      role: "assistant",
+      content: "Preface before tool. Good call — let me tighten this.",
+      timestamp: Date.now(),
+      toolCalls: [toolCall],
+      isStreaming: true,
+    });
+
+    view.handleStreamingMessage({
+      id: baseId,
+      role: "assistant",
+      content: "Preface before tool.Good call — let me tighten this. Now I'll rewrite it.",
+      timestamp: Date.now(),
+      toolCalls: [toolCall],
+      isStreaming: true,
+    });
+
+    expect(view.messages).toHaveLength(2);
+    expect(view.messages[1].content).toBe("Good call — let me tighten this. Now I'll rewrite it.");
+    expect((view.messages[1].content.match(/Good call/g) || []).length).toBe(1);
   });
 
   it("prevents rapid double-submit from creating duplicate user messages", async () => {
