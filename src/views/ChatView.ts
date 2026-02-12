@@ -1780,58 +1780,8 @@ export class ChatView extends ItemView {
         }
       }
 
-      // Only update UI if we're still viewing the same conversation.
-      const nowCurrentConv = this.conversationManager.getCurrentConversation();
-      if (nowCurrentConv?.id === streamConvId) {
-        const shouldPinFinal = this.isNearBottom();
-        const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
-        const splitTextId = this.streamingTextMessageId;
-        const hasSplit =
-          !!splitTextId &&
-          splitTextId !== streamMsgId &&
-          this.streamingBaseContentPrefix !== null;
-
-        if (streamingIndex !== -1) {
-          const previous = this.messages[streamingIndex];
-          this.messages[streamingIndex] = {
-            ...response,
-            id: previous.id,
-            content: hasSplit ? previous.content : mergeStreamingText(previous.content, response.content),
-            toolCalls: this.mergeToolCalls(previous.toolCalls, response.toolCalls),
-            isStreaming: false,
-          };
-        } else if (!hasSplit) {
-          this.messages.push(response);
-        }
-
-        if (hasSplit) {
-          const continuationText = this.extractContinuationText(response.content).trim();
-          if (continuationText.length > 0 && splitTextId) {
-            const textIndex = this.messages.findIndex((m) => m.id === splitTextId);
-            if (textIndex !== -1) {
-              const previousText = this.messages[textIndex];
-              this.messages[textIndex] = {
-                ...previousText,
-                content: continuationText,
-                isStreaming: false,
-                timestamp: Date.now(),
-              };
-            } else {
-              this.messages.push({
-                id: splitTextId,
-                role: "assistant",
-                content: continuationText,
-                timestamp: Date.now(),
-                isStreaming: false,
-              });
-            }
-          }
-        }
-        this.messageList.render(this.messages);
-        if (shouldPinFinal) {
-          this.scrollToBottom();
-        }
-      } else {
+      if (!this.finalizeStreamingResponse(streamConvId, streamMsgId, response)) {
+        const nowCurrentConv = this.conversationManager.getCurrentConversation();
         logger.info("ChatView", "Stream completed but user switched conversations", {
           streamConvId,
           currentConvId: nowCurrentConv?.id,
@@ -2293,58 +2243,7 @@ export class ChatView extends ItemView {
         }
       }
 
-      // Only update UI if we're still viewing the same conversation.
-      const nowCurrentConv = this.conversationManager.getCurrentConversation();
-      if (nowCurrentConv?.id === streamConvId) {
-        const shouldPinFinal = this.isNearBottom();
-        const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
-        const splitTextId = this.streamingTextMessageId;
-        const hasSplit =
-          !!splitTextId &&
-          splitTextId !== streamMsgId &&
-          this.streamingBaseContentPrefix !== null;
-
-        if (streamingIndex !== -1) {
-          const previous = this.messages[streamingIndex];
-          this.messages[streamingIndex] = {
-            ...response,
-            id: previous.id,
-            content: hasSplit ? previous.content : mergeStreamingText(previous.content, response.content),
-            toolCalls: this.mergeToolCalls(previous.toolCalls, response.toolCalls),
-            isStreaming: false,
-          };
-        } else if (!hasSplit) {
-          this.messages.push(response);
-        }
-
-        if (hasSplit) {
-          const continuationText = this.extractContinuationText(response.content).trim();
-          if (continuationText.length > 0 && splitTextId) {
-            const textIndex = this.messages.findIndex((m) => m.id === splitTextId);
-            if (textIndex !== -1) {
-              const previousText = this.messages[textIndex];
-              this.messages[textIndex] = {
-                ...previousText,
-                content: continuationText,
-                isStreaming: false,
-                timestamp: Date.now(),
-              };
-            } else {
-              this.messages.push({
-                id: splitTextId,
-                role: "assistant",
-                content: continuationText,
-                timestamp: Date.now(),
-                isStreaming: false,
-              });
-            }
-          }
-        }
-        this.messageList.render(this.messages);
-        if (shouldPinFinal) {
-          this.scrollToBottom();
-        }
-      }
+      this.finalizeStreamingResponse(streamConvId, streamMsgId, response);
     } catch (error) {
       const errorMessage = String(error);
       const isAbort = (error as Error).name === "AbortError" || errorMessage.includes("aborted") || this.isCancelling;
@@ -2370,6 +2269,62 @@ export class ChatView extends ItemView {
       this.chatInput.updateState();
       this.refreshProjectControls();
     }
+  }
+
+  private finalizeStreamingResponse(streamConvId: string | null, streamMsgId: string | null, response: ChatMessage): boolean {
+    const nowCurrentConv = this.conversationManager.getCurrentConversation();
+    if (nowCurrentConv?.id !== streamConvId) {
+      return false;
+    }
+
+    const shouldPinFinal = this.isNearBottom();
+    const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
+    const splitTextId = this.streamingTextMessageId;
+    const hasSplit = !!splitTextId && splitTextId !== streamMsgId && this.streamingBaseContentPrefix !== null;
+
+    if (streamingIndex !== -1) {
+      const previous = this.messages[streamingIndex];
+      this.messages[streamingIndex] = {
+        ...response,
+        id: previous.id,
+        content: hasSplit ? previous.content : mergeStreamingText(previous.content, response.content),
+        toolCalls: this.mergeToolCalls(previous.toolCalls, response.toolCalls),
+        isStreaming: false,
+      };
+    } else if (!hasSplit) {
+      this.messages.push(response);
+    }
+
+    if (hasSplit) {
+      const continuationText = this.extractContinuationText(response.content).trim();
+      if (continuationText.length > 0 && splitTextId) {
+        const textIndex = this.messages.findIndex((m) => m.id === splitTextId);
+        if (textIndex !== -1) {
+          const previousText = this.messages[textIndex];
+          this.messages[textIndex] = {
+            ...previousText,
+            content: continuationText,
+            isStreaming: false,
+            timestamp: Date.now(),
+          };
+        } else {
+          this.messages.push({
+            id: splitTextId,
+            role: "assistant",
+            content: continuationText,
+            timestamp: Date.now(),
+            isStreaming: false,
+          });
+        }
+      }
+    }
+
+    this.messageList.render(this.messages);
+    if (shouldPinFinal) {
+      this.scrollToBottom();
+    }
+
+    return true;
   }
 
   async startNewConversation() {
