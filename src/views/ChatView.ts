@@ -6,6 +6,7 @@ import { MessageList } from "./MessageList";
 import { AgentController, classifyError } from "../agent/AgentController";
 import { ConversationManager } from "../agent/ConversationManager";
 import { ConversationHistoryModal } from "./ConversationHistoryModal";
+import { ResumeConversationModal } from "./ResumeConversationModal";
 import { logger } from "../utils/Logger";
 import { CLAUDE_ICON_NAME } from "../utils/icons";
 import { revertFromBackup } from "../utils/DiffEngine";
@@ -1005,6 +1006,7 @@ export class ChatView extends ItemView {
     lines.push("- `@[[Daily.md]] Summarize key tasks and blockers`");
     lines.push("- `/model opus`");
     lines.push("- `/permissions`");
+    lines.push("- `/resume 2`");
     lines.push("- `/search backlinks for this note`");
 
     await this.appendLocalAssistantMessage("Help", lines.join("\n"));
@@ -1282,19 +1284,7 @@ export class ChatView extends ItemView {
     const query = args.join(" ").trim();
 
     if (!query) {
-      const lines = [
-        "Use `/resume <number|id|title>` to switch conversations.",
-        "",
-        "Recent conversations:",
-        ...recent.map((conversation, index) => {
-          const marker = conversation.id === currentId ? " (current)" : "";
-          return `${index + 1}. \`${conversation.title || "Untitled"}\`${marker} - ${new Date(conversation.updatedAt).toLocaleString()}`;
-        }),
-      ];
-      if (conversations.length > recent.length) {
-        lines.push(`...and ${conversations.length - recent.length} more in history.`);
-      }
-      await this.appendLocalAssistantMessage("Resume Conversation", lines.join("\n"));
+      this.openResumeConversationModal(conversations, "");
       return;
     }
 
@@ -1324,25 +1314,15 @@ export class ChatView extends ItemView {
       if (titleMatches.length === 1) {
         target = titleMatches[0];
       } else if (titleMatches.length > 1) {
-        const lines = [
-          `Found multiple matches for \`${query}\`. Use a number or more specific title:`,
-          "",
-          ...titleMatches.slice(0, 8).map((conversation) => {
-            const displayIndex = recent.findIndex((item) => item.id === conversation.id);
-            const indexHint = displayIndex >= 0 ? `${displayIndex + 1}. ` : "- ";
-            return `${indexHint}\`${conversation.title || "Untitled"}\` (\`${conversation.id}\`)`;
-          }),
-        ];
-        await this.appendLocalAssistantMessage("Resume Conversation", lines.join("\n"));
+        new Notice(`Multiple matches for "${query}". Select a conversation in the picker.`);
+        this.openResumeConversationModal(conversations, query);
         return;
       }
     }
 
     if (!target) {
-      await this.appendLocalAssistantMessage(
-        "Resume Conversation",
-        `No conversation matched \`${query}\`. Run \`/resume\` to view recent options.`
-      );
+      new Notice(`No exact match for "${query}". Select from filtered conversations.`);
+      this.openResumeConversationModal(conversations, query);
       return;
     }
 
@@ -1353,6 +1333,25 @@ export class ChatView extends ItemView {
 
     await this.loadConversation(target.id);
     new Notice(`Resumed "${target.title || "Untitled"}".`);
+  }
+
+  private openResumeConversationModal(conversations: Conversation[], initialQuery = "") {
+    const currentId = this.conversationManager.getCurrentConversation()?.id ?? null;
+    const modal = new ResumeConversationModal(
+      this.app,
+      conversations,
+      currentId,
+      async (conversation) => {
+        if (conversation.id === currentId) {
+          new Notice(`Already in "${conversation.title || "Untitled"}".`);
+          return;
+        }
+        await this.loadConversation(conversation.id);
+        new Notice(`Resumed "${conversation.title || "Untitled"}".`);
+      },
+      initialQuery
+    );
+    modal.open();
   }
 
   private async handlePinFileCommand() {

@@ -66,7 +66,7 @@ Slash command workflow is CLI-style:
 Key slash commands:
 - `/help` shows a rich command catalog (grouped local commands, discovered SDK/project/personal/MCP commands, keyboard tips, and examples).
 - `/doctor` runs local diagnostics with recommended remediation (auth/session/model/context/MCP/permission usage checks).
-- `/new`, `/clear`, `/rename [title]`, `/resume [index|id|title]` manage conversation state.
+- `/new`, `/clear`, `/rename [title]`, `/resume [index|id|title]` manage conversation state (`/resume` opens a keyboard-searchable session picker).
 - `/file [path]`, `/pin-file`, `/pin-selection`, `/pin-backlinks [count]`, `/pins`, `/clear-pins` manage context.
 - `/status`, `/context`, `/usage`, `/cost`, `/permissions`, `/mcp`, `/model [name]`, `/logs` show operational diagnostics.
 - `/rewind` restores the most recent backup and `/checkpoint` lists rewind checkpoints.
