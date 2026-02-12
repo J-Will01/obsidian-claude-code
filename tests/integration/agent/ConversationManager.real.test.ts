@@ -202,6 +202,33 @@ describe("ConversationManager (real)", () => {
       expect(history.length).toBe(1);
       expect(history[0].content).toBe("Hello");
     });
+
+    it("should return display message snapshots without exposing internal array references", async () => {
+      await manager.createConversation();
+      await manager.addMessage({
+        id: "msg-1",
+        role: "user",
+        content: "Hello",
+        timestamp: Date.now(),
+      });
+
+      const first = manager.getDisplayMessages();
+      const second = manager.getDisplayMessages();
+
+      expect(first).not.toBe(second);
+      expect(first[0]).not.toBe(second[0]);
+
+      first.push({
+        id: "msg-extra",
+        role: "assistant",
+        content: "Should not leak into manager state",
+        timestamp: Date.now(),
+      });
+
+      const latest = manager.getDisplayMessages();
+      expect(latest.length).toBe(1);
+      expect(latest[0].content).toBe("Hello");
+    });
   });
 
   describe("loadConversation", () => {
