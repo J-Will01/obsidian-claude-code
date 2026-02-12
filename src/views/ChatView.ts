@@ -424,6 +424,8 @@ export class ChatView extends ItemView {
 
     // Clear UI streaming state (but stream continues in background).
     this.streamingMessageId = null;
+    this.streamingTextMessageId = null;
+    this.streamingBaseContentPrefix = null;
     this.isStreaming = false;
 
     const conv = await this.conversationManager.loadConversation(id);
@@ -1593,6 +1595,9 @@ export class ChatView extends ItemView {
     // Store for retry functionality.
     this.lastUserMessage = content.trim();
     const shouldPin = this.isNearBottom();
+    // Lock streaming immediately to prevent rapid double-submit races.
+    this.isStreaming = true;
+    this.chatInput.updateState();
 
     // Add user message to UI.
     const userMessage: ChatMessage = {
@@ -1628,10 +1633,6 @@ export class ChatView extends ItemView {
     if (shouldPin) {
       this.scrollToBottom();
     }
-
-    // Start streaming.
-    this.isStreaming = true;
-    this.chatInput.updateState();
 
     // Immediately show a "thinking" placeholder message for instant feedback.
     const placeholderId = this.generateId();

@@ -18,3 +18,7 @@ All notable changes to this project will be documented in this file.
 - Streaming assistant transcript text is now merged across tool-call phases instead of being overwritten by later assistant segments.
 - Final assistant message merge now preserves earlier content and tool-call context ordering during streaming completion.
 - Chat transcript ordering now keeps tool-call cards in sequence with streamed text by splitting post-tool assistant text into a continuation message when needed.
+- Rapid double-submit is now blocked at stream start to prevent duplicate user/assistant message runs.
+
+### Changed
+- Removed per-message author headers (`You`/`Claude`) from chat bubbles while preserving left/right role layout.

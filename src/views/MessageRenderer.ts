@@ -21,10 +21,6 @@ export class MessageRenderer {
     this.containerEl.addClass("claude-code-message");
     this.containerEl.addClass(`claude-code-message-${this.message.role}`);
 
-    // Role indicator.
-    const roleEl = this.containerEl.createDiv({ cls: "claude-code-message-role" });
-    roleEl.setText(this.message.role === "user" ? "You" : "Claude");
-
     // Content area.
     this.contentEl = this.containerEl.createDiv({ cls: "claude-code-message-content" });
     this.renderContent();

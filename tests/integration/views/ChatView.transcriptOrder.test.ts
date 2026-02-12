@@ -58,6 +58,16 @@ function createToolCall(id: string): ToolCall {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("ChatView transcript ordering", () => {
   it("keeps tool call before text when tool appears before first streamed text chunk", () => {
     const view = createStreamingViewHarness();
@@ -136,5 +146,44 @@ describe("ChatView transcript ordering", () => {
 
     expect(view.messages[0].content).toBe("I can look this up.");
     expect(view.messages[1].content).toContain("More detail from sources.");
+  });
+
+  it("prevents rapid double-submit from creating duplicate user messages", async () => {
+    const view = createStreamingViewHarness() as any;
+    const gate = deferred<void>();
+
+    view.chatInput = { updateState: vi.fn() };
+    view.messagesContainerEl = document.createElement("div");
+    view.conversationManager = {
+      addMessage: vi.fn().mockImplementation(() => gate.promise),
+      addMessageToConversation: vi.fn().mockResolvedValue(undefined),
+      updateUsageForConversation: vi.fn().mockResolvedValue(undefined),
+      updateSessionIdForConversation: vi.fn().mockResolvedValue(undefined),
+      getCurrentConversation: () => ({ id: "conv-1" }),
+      getPinnedContext: () => [],
+    };
+    view.agentController = {
+      sendMessage: vi.fn().mockResolvedValue({
+        id: "assistant-final",
+        role: "assistant",
+        content: "Done",
+        timestamp: Date.now(),
+      }),
+      setActiveConversationId: vi.fn(),
+      getLastUsageSample: vi.fn().mockReturnValue(null),
+      getSessionId: vi.fn().mockReturnValue(null),
+    };
+
+    const first = view.handleSendMessage("duplicate me");
+    const second = view.handleSendMessage("duplicate me");
+
+    expect(view.conversationManager.addMessage).toHaveBeenCalledTimes(1);
+    expect(view.messages.filter((message: ChatMessage) => message.role === "user")).toHaveLength(1);
+
+    gate.resolve();
+    await Promise.all([first, second]);
+
+    expect(view.agentController.sendMessage).toHaveBeenCalledTimes(1);
+    expect(view.messages.filter((message: ChatMessage) => message.role === "user")).toHaveLength(1);
   });
 });
