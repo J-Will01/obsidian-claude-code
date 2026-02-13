@@ -10,7 +10,12 @@ This document maps the current UX surface area to the planned Claude Code parity
 Current behavior:
 - Partial text deltas flow through `handleStreamEvent()` and the StreamingAccumulator.
 - ChatView updates the existing streaming message by ID and auto-scrolls only when user is near the bottom.
-- When tool calls appear mid-stream, ChatView can split post-tool text into a continuation assistant message to preserve chronological transcript order in the UI.
+- When tool calls appear mid-stream, ChatView can repeatedly split post-tool text into continuation assistant messages to preserve chronological transcript order in the UI.
+
+Regression fixed (2026-02-13):
+- Issue: tool cards and assistant text were sometimes grouped out of order (tool blocks rendered above later "I will now..." text that should appear after those tool calls).
+- Fix location: `src/views/ChatView.ts` stream segmentation + tool routing/final reconciliation logic.
+- Guardrail test: `tests/integration/views/ChatView.transcriptOrder.test.ts` (`re-splits continuation text when later tool calls arrive`).
 
 ## Tool call display
 - **Tool call parsing:** `src/agent/AgentController.ts` (processAssistantMessage, tool result normalization).

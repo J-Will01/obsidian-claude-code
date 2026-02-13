@@ -36,6 +36,7 @@ export class ChatView extends ItemView {
   private streamingMessageId: string | null = null;
   private streamingTextMessageId: string | null = null;
   private streamingBaseContentPrefix: string | null = null;
+  private streamingSegmentIds: string[] = [];
   private viewId: string;
   private isCancelling = false;  // Flag to suppress error display during intentional cancel.
   private activeStreamConversationId: string | null = null;  // Track which conversation owns the active stream.
@@ -424,9 +425,7 @@ export class ChatView extends ItemView {
     // When switching, we just clear UI state but the stream continues.
 
     // Clear UI streaming state (but stream continues in background).
-    this.streamingMessageId = null;
-    this.streamingTextMessageId = null;
-    this.streamingBaseContentPrefix = null;
+    this.clearStreamingSegmentation();
     this.isStreaming = false;
 
     const conv = await this.conversationManager.loadConversation(id);
@@ -756,6 +755,88 @@ export class ChatView extends ItemView {
       merged.set(toolCall.id, existing ? { ...existing, ...toolCall } : toolCall);
     }
     return merged.size > 0 ? Array.from(merged.values()) : undefined;
+  }
+
+  private mergeToolCallsForKnownIds(
+    previous?: ToolCall[],
+    incoming?: ToolCall[]
+  ): ToolCall[] | undefined {
+    if (!previous || previous.length === 0) {
+      return previous;
+    }
+    if (!incoming || incoming.length === 0) {
+      return previous;
+    }
+
+    const knownIds = new Set(previous.map((toolCall) => toolCall.id));
+    const relevantIncoming = incoming.filter((toolCall) => knownIds.has(toolCall.id));
+    return this.mergeToolCalls(previous, relevantIncoming);
+  }
+
+  private beginStreamingSegments(baseMessageId: string) {
+    this.streamingMessageId = baseMessageId;
+    this.streamingTextMessageId = baseMessageId;
+    this.streamingBaseContentPrefix = null;
+    this.streamingSegmentIds = [baseMessageId];
+  }
+
+  private registerStreamingSegment(messageId: string) {
+    if (!this.streamingSegmentIds.includes(messageId)) {
+      this.streamingSegmentIds.push(messageId);
+    }
+  }
+
+  private clearStreamingSegmentation() {
+    this.streamingMessageId = null;
+    this.streamingTextMessageId = null;
+    this.streamingBaseContentPrefix = null;
+    this.streamingSegmentIds = [];
+  }
+
+  private reconcileToolCallsWithResponse(responseToolCalls: ToolCall[] | undefined, fallbackMessageId: string | null) {
+    if (!responseToolCalls || responseToolCalls.length === 0) {
+      return;
+    }
+
+    const byId = new Map(responseToolCalls.map((toolCall) => [toolCall.id, toolCall]));
+    const seen = new Set<string>();
+
+    for (const message of this.messages) {
+      if (!message.toolCalls || message.toolCalls.length === 0) {
+        continue;
+      }
+      let changed = false;
+      message.toolCalls = message.toolCalls.map((existing) => {
+        const update = byId.get(existing.id);
+        if (!update) {
+          return existing;
+        }
+        seen.add(existing.id);
+        changed = true;
+        return { ...existing, ...update };
+      });
+      if (changed) {
+        this.messageList.updateMessage(message.id, message);
+      }
+    }
+
+    const unmatched = responseToolCalls.filter((toolCall) => !seen.has(toolCall.id));
+    if (unmatched.length === 0 || !fallbackMessageId) {
+      return;
+    }
+
+    const fallbackIndex = this.messages.findIndex((message) => message.id === fallbackMessageId);
+    if (fallbackIndex === -1) {
+      return;
+    }
+
+    const fallbackMessage = this.messages[fallbackIndex];
+    const merged = this.mergeToolCalls(fallbackMessage.toolCalls, unmatched) ?? unmatched;
+    this.messages[fallbackIndex] = {
+      ...fallbackMessage,
+      toolCalls: merged,
+    };
+    this.messageList.updateMessage(fallbackMessageId, this.messages[fallbackIndex]);
   }
 
   private extractContinuationText(content: string): string {
@@ -1734,9 +1815,7 @@ export class ChatView extends ItemView {
       isStreaming: true,
     };
     this.messages.push(placeholderMessage);
-    this.streamingMessageId = placeholderId;
-    this.streamingTextMessageId = placeholderId;
-    this.streamingBaseContentPrefix = null;
+    this.beginStreamingSegments(placeholderId);
     this.messageList.addMessage(placeholderMessage);
     if (shouldPin) {
       this.scrollToBottom();
@@ -1809,9 +1888,7 @@ export class ChatView extends ItemView {
     } finally {
       logger.info("ChatView", "handleSendMessage completed");
       this.isStreaming = false;
-      this.streamingMessageId = null;
-      this.streamingTextMessageId = null;
-      this.streamingBaseContentPrefix = null;
+      this.clearStreamingSegmentation();
       this.activeStreamConversationId = null;
       this.chatInput.updateState();
       this.refreshProjectControls();
@@ -1853,7 +1930,6 @@ export class ChatView extends ItemView {
       const baseIndex = this.messages.findIndex((m) => m.id === this.streamingMessageId);
       if (baseIndex !== -1) {
         const basePrevious = this.messages[baseIndex];
-        const mergedToolCalls = this.mergeToolCalls(basePrevious.toolCalls, message.toolCalls);
         const mergedContent = mergeStreamingText(basePrevious.content, message.content);
         const splitActive =
           this.streamingTextMessageId !== null &&
@@ -1861,6 +1937,7 @@ export class ChatView extends ItemView {
           this.streamingBaseContentPrefix !== null;
 
         if (!splitActive) {
+          const mergedToolCalls = this.mergeToolCalls(basePrevious.toolCalls, message.toolCalls);
           const shouldSplit =
             !!mergedToolCalls &&
             mergedToolCalls.length > 0 &&
@@ -1883,6 +1960,7 @@ export class ChatView extends ItemView {
               const continuationId = this.generateId();
               this.streamingTextMessageId = continuationId;
               this.streamingBaseContentPrefix = basePrevious.content;
+              this.registerStreamingSegment(continuationId);
               const continuationMessage: ChatMessage = {
                 id: continuationId,
                 role: "assistant",
@@ -1905,12 +1983,13 @@ export class ChatView extends ItemView {
             this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
           }
         } else {
+          const baseToolCalls = this.mergeToolCallsForKnownIds(basePrevious.toolCalls, message.toolCalls);
           this.messages[baseIndex] = {
             ...basePrevious,
             ...message,
             id: this.streamingMessageId,
             content: basePrevious.content,
-            toolCalls: mergedToolCalls,
+            toolCalls: baseToolCalls,
             isStreaming: true,
           };
           this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
@@ -1918,15 +1997,57 @@ export class ChatView extends ItemView {
           if (this.streamingTextMessageId) {
             const textIndex = this.messages.findIndex((m) => m.id === this.streamingTextMessageId);
             const continuationText = this.extractContinuationText(message.content);
-            if (textIndex !== -1 && continuationText.trim().length > 0) {
+            if (textIndex !== -1) {
               const textPrevious = this.messages[textIndex];
-              this.messages[textIndex] = {
-                ...textPrevious,
-                content: continuationText,
-                timestamp: Date.now(),
-                isStreaming: true,
-              };
-              this.messageList.updateMessage(this.streamingTextMessageId, this.messages[textIndex]);
+              const mergedContinuationText = mergeStreamingText(textPrevious.content, continuationText);
+              const mergedTextToolCalls = this.mergeToolCallsForKnownIds(textPrevious.toolCalls, message.toolCalls);
+              const shouldSplitAgain =
+                !!mergedTextToolCalls &&
+                mergedTextToolCalls.length > 0 &&
+                mergedContinuationText.length > textPrevious.content.length &&
+                (textPrevious.content.length === 0 || mergedContinuationText.startsWith(textPrevious.content));
+
+              if (shouldSplitAgain) {
+                const continuationSuffix = mergedContinuationText
+                  .slice(textPrevious.content.length)
+                  .replace(/^\s+/, "");
+                this.messages[textIndex] = {
+                  ...textPrevious,
+                  toolCalls: mergedTextToolCalls,
+                  timestamp: Date.now(),
+                  isStreaming: true,
+                };
+                this.messageList.updateMessage(this.streamingTextMessageId, this.messages[textIndex]);
+
+                if (continuationSuffix.trim().length > 0) {
+                  const continuationId = this.generateId();
+                  const computedPrefix =
+                    message.content.endsWith(continuationSuffix)
+                      ? message.content.slice(0, message.content.length - continuationSuffix.length)
+                      : `${this.streamingBaseContentPrefix ?? ""}${textPrevious.content}`;
+                  this.streamingBaseContentPrefix = computedPrefix;
+                  this.streamingTextMessageId = continuationId;
+                  this.registerStreamingSegment(continuationId);
+                  const continuationMessage: ChatMessage = {
+                    id: continuationId,
+                    role: "assistant",
+                    content: continuationSuffix,
+                    timestamp: Date.now(),
+                    isStreaming: true,
+                  };
+                  this.messages.push(continuationMessage);
+                  this.messageList.addMessage(continuationMessage);
+                }
+              } else if (mergedContinuationText.trim().length > 0 || textPrevious.content.length > 0) {
+                this.messages[textIndex] = {
+                  ...textPrevious,
+                  content: mergedContinuationText,
+                  toolCalls: mergedTextToolCalls,
+                  timestamp: Date.now(),
+                  isStreaming: true,
+                };
+                this.messageList.updateMessage(this.streamingTextMessageId, this.messages[textIndex]);
+              }
             } else if (textIndex === -1 && continuationText.trim().length > 0) {
               const continuationMessage: ChatMessage = {
                 id: this.streamingTextMessageId,
@@ -1937,14 +2058,13 @@ export class ChatView extends ItemView {
               };
               this.messages.push(continuationMessage);
               this.messageList.addMessage(continuationMessage);
+              this.registerStreamingSegment(this.streamingTextMessageId);
             }
           }
         }
       }
     } else {
-      this.streamingMessageId = message.id;
-      this.streamingTextMessageId = message.id;
-      this.streamingBaseContentPrefix = null;
+      this.beginStreamingSegments(message.id);
       this.messages.push(message);
       this.messageList.addMessage(message);
     }
@@ -1962,22 +2082,37 @@ export class ChatView extends ItemView {
 
     const shouldPin = this.isNearBottom();
 
-    // Add tool call to current streaming message.
-    if (this.streamingMessageId) {
-      const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
-      if (index !== -1) {
-        if (!this.messages[index].toolCalls) {
-          this.messages[index].toolCalls = [];
-        }
-        // Deduplicate: only add if not already present (prevents double-add from shared references).
-        const existing = this.messages[index].toolCalls!.find((t) => t.id === toolCall.id);
-        if (!existing) {
-          this.messages[index].toolCalls!.push(toolCall);
-          this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
-          if (shouldPin) {
-            this.scrollToBottom();
-          }
-        }
+    const splitActive =
+      this.streamingTextMessageId !== null &&
+      this.streamingTextMessageId !== this.streamingMessageId &&
+      this.streamingBaseContentPrefix !== null;
+    const preferredMessageId = splitActive ? this.streamingTextMessageId : this.streamingMessageId;
+
+    if (!preferredMessageId) {
+      return;
+    }
+
+    let index = this.messages.findIndex((message) => message.id === preferredMessageId);
+    let targetMessageId = preferredMessageId;
+    if (index === -1 && this.streamingMessageId && preferredMessageId !== this.streamingMessageId) {
+      index = this.messages.findIndex((message) => message.id === this.streamingMessageId);
+      targetMessageId = this.streamingMessageId;
+    }
+    if (index === -1) {
+      return;
+    }
+
+    if (!this.messages[index].toolCalls) {
+      this.messages[index].toolCalls = [];
+    }
+    // Deduplicate: only add if not already present (prevents double-add from shared references).
+    const existing = this.messages[index].toolCalls!.find((tool) => tool.id === toolCall.id);
+    if (!existing) {
+      this.messages[index].toolCalls!.push(toolCall);
+      this.registerStreamingSegment(targetMessageId);
+      this.messageList.updateMessage(targetMessageId, this.messages[index]);
+      if (shouldPin) {
+        this.scrollToBottom();
       }
     }
   }
@@ -1991,24 +2126,26 @@ export class ChatView extends ItemView {
 
     const shouldPin = this.isNearBottom();
 
-    // Update tool call status.
-    if (this.streamingMessageId) {
-      const index = this.messages.findIndex((m) => m.id === this.streamingMessageId);
-      if (index !== -1 && this.messages[index].toolCalls) {
-        const toolCall = this.messages[index].toolCalls!.find((t) => t.id === toolCallId);
-        if (toolCall) {
-          toolCall.output = result;
-          toolCall.status = isError ? "error" : "success";
-          toolCall.endTime = Date.now();
-          if (isError) {
-            toolCall.error = result;
-          }
-          this.messageList.updateMessage(this.streamingMessageId, this.messages[index]);
-          if (shouldPin) {
-            this.scrollToBottom();
-          }
-        }
-      }
+    const message = this.findMessageWithToolCall(toolCallId);
+    if (!message?.toolCalls) {
+      return;
+    }
+
+    const toolCall = message.toolCalls.find((tool) => tool.id === toolCallId);
+    if (!toolCall) {
+      return;
+    }
+
+    toolCall.output = result;
+    toolCall.status = isError ? "error" : "success";
+    toolCall.endTime = Date.now();
+    if (isError) {
+      toolCall.error = result;
+    }
+
+    this.messageList.updateMessage(message.id, message);
+    if (shouldPin) {
+      this.scrollToBottom();
     }
   }
 
@@ -2090,9 +2227,7 @@ export class ChatView extends ItemView {
   private handleCancelStreaming() {
     this.agentController.cancelStream();
     this.isStreaming = false;
-    this.streamingMessageId = null;
-    this.streamingTextMessageId = null;
-    this.streamingBaseContentPrefix = null;
+    this.clearStreamingSegmentation();
     this.chatInput.updateState();
   }
 
@@ -2199,9 +2334,7 @@ export class ChatView extends ItemView {
       isStreaming: true,
     };
     this.messages.push(placeholderMessage);
-    this.streamingMessageId = placeholderId;
-    this.streamingTextMessageId = placeholderId;
-    this.streamingBaseContentPrefix = null;
+    this.beginStreamingSegments(placeholderId);
     this.messageList.render(this.messages);
     if (shouldPin) {
       this.scrollToBottom();
@@ -2262,9 +2395,7 @@ export class ChatView extends ItemView {
       }
     } finally {
       this.isStreaming = false;
-      this.streamingMessageId = null;
-      this.streamingTextMessageId = null;
-      this.streamingBaseContentPrefix = null;
+      this.clearStreamingSegmentation();
       this.activeStreamConversationId = null;
       this.chatInput.updateState();
       this.refreshProjectControls();
@@ -2281,6 +2412,7 @@ export class ChatView extends ItemView {
     const streamingIndex = this.messages.findIndex((m) => m.id === streamMsgId);
     const splitTextId = this.streamingTextMessageId;
     const hasSplit = !!splitTextId && splitTextId !== streamMsgId && this.streamingBaseContentPrefix !== null;
+    const fallbackToolMessageId = hasSplit ? splitTextId : streamMsgId;
 
     if (streamingIndex !== -1) {
       const previous = this.messages[streamingIndex];
@@ -2288,7 +2420,9 @@ export class ChatView extends ItemView {
         ...response,
         id: previous.id,
         content: hasSplit ? previous.content : mergeStreamingText(previous.content, response.content),
-        toolCalls: this.mergeToolCalls(previous.toolCalls, response.toolCalls),
+        toolCalls: hasSplit
+          ? this.mergeToolCallsForKnownIds(previous.toolCalls, response.toolCalls)
+          : this.mergeToolCalls(previous.toolCalls, response.toolCalls),
         isStreaming: false,
       };
     } else if (!hasSplit) {
@@ -2303,7 +2437,8 @@ export class ChatView extends ItemView {
           const previousText = this.messages[textIndex];
           this.messages[textIndex] = {
             ...previousText,
-            content: continuationText,
+            content: mergeStreamingText(previousText.content, continuationText),
+            toolCalls: this.mergeToolCallsForKnownIds(previousText.toolCalls, response.toolCalls),
             isStreaming: false,
             timestamp: Date.now(),
           };
@@ -2315,9 +2450,25 @@ export class ChatView extends ItemView {
             timestamp: Date.now(),
             isStreaming: false,
           });
+          this.registerStreamingSegment(splitTextId);
         }
       }
     }
+
+    for (const segmentId of this.streamingSegmentIds) {
+      const segmentIndex = this.messages.findIndex((message) => message.id === segmentId);
+      if (segmentIndex === -1) {
+        continue;
+      }
+      if (this.messages[segmentIndex].isStreaming) {
+        this.messages[segmentIndex] = {
+          ...this.messages[segmentIndex],
+          isStreaming: false,
+        };
+      }
+    }
+
+    this.reconcileToolCallsWithResponse(response.toolCalls, fallbackToolMessageId ?? null);
 
     this.messageList.render(this.messages);
     if (shouldPinFinal) {
@@ -2335,9 +2486,7 @@ export class ChatView extends ItemView {
     // When creating new conversation, we just clear UI state but stream continues.
 
     // Clear UI streaming state (but stream continues in background).
-    this.streamingMessageId = null;
-    this.streamingTextMessageId = null;
-    this.streamingBaseContentPrefix = null;
+    this.clearStreamingSegmentation();
     this.isStreaming = false;
 
     // Clear state.

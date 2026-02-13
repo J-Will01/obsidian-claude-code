@@ -188,6 +188,70 @@ describe("ChatView transcript ordering", () => {
     expect((view.messages[1].content.match(/Good call/g) || []).length).toBe(1);
   });
 
+  it("re-splits continuation text when later tool calls arrive", () => {
+    const view = createStreamingViewHarness();
+    const baseId = "stream-base";
+    const firstTool = createToolCall("tool-4");
+    const secondTool = createToolCall("tool-5");
+    const thirdTool = createToolCall("tool-6");
+
+    view.messages.push({
+      id: baseId,
+      role: "assistant",
+      content: "Let me read the comments file.",
+      timestamp: Date.now(),
+      isStreaming: true,
+    });
+    view.streamingMessageId = baseId;
+    view.streamingTextMessageId = baseId;
+    view.streamingBaseContentPrefix = null;
+
+    view.handleToolCall(firstTool);
+    view.handleStreamingMessage({
+      id: baseId,
+      role: "assistant",
+      content: "Let me read the comments file. Let me find and read the screenshots.",
+      timestamp: Date.now(),
+      toolCalls: [firstTool],
+      isStreaming: true,
+    });
+
+    expect(view.messages).toHaveLength(2);
+    expect(view.messages[0].toolCalls?.map((tool) => tool.id)).toEqual(["tool-4"]);
+    expect(view.messages[1].content).toBe("Let me find and read the screenshots.");
+
+    view.handleToolCall(secondTool);
+    view.handleStreamingMessage({
+      id: baseId,
+      role: "assistant",
+      content: "Let me read the comments file. Let me find and read the screenshots. Now let me read the lesson file.",
+      timestamp: Date.now(),
+      toolCalls: [firstTool, secondTool],
+      isStreaming: true,
+    });
+
+    expect(view.messages).toHaveLength(3);
+    expect(view.messages[1].content).toBe("Let me find and read the screenshots.");
+    expect(view.messages[1].toolCalls?.map((tool) => tool.id)).toEqual(["tool-5"]);
+    expect(view.messages[2].content).toBe("Now let me read the lesson file.");
+
+    view.handleToolCall(thirdTool);
+    view.handleStreamingMessage({
+      id: baseId,
+      role: "assistant",
+      content: "Let me read the comments file. Let me find and read the screenshots. Now let me read the lesson file. Good. Now I will update the comments file.",
+      timestamp: Date.now(),
+      toolCalls: [firstTool, secondTool, thirdTool],
+      isStreaming: true,
+    });
+
+    expect(view.messages).toHaveLength(4);
+    expect(view.messages[2].content).toBe("Now let me read the lesson file.");
+    expect(view.messages[2].toolCalls?.map((tool) => tool.id)).toEqual(["tool-6"]);
+    expect(view.messages[3].content).toBe("Good. Now I will update the comments file.");
+    expect(view.messages[3].toolCalls).toBeUndefined();
+  });
+
   it("prevents rapid double-submit from creating duplicate user messages", async () => {
     const view = createStreamingViewHarness() as any;
     const gate = deferred<void>();
