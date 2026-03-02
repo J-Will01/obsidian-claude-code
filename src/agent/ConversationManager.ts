@@ -38,6 +38,8 @@ export class ConversationManager {
   };
   private currentConversation: StoredConversation | null = null;
   private initialized = false;
+  private lastSavedIndexContent: string | null = null;
+  private lastSavedConversationContent: Map<string, string> = new Map();
 
   constructor(plugin: ClaudeCodePlugin) {
     this.plugin = plugin;
@@ -85,6 +87,7 @@ export class ConversationManager {
       const exists = await vault.adapter.exists(indexPath);
       if (exists) {
         const content = await vault.adapter.read(indexPath);
+        this.lastSavedIndexContent = content;
         this.index = JSON.parse(content);
       }
     } catch (error) {
@@ -99,10 +102,14 @@ export class ConversationManager {
     const indexPath = `${STORAGE_DIR}/${CONVERSATIONS_FILE}`;
 
     const content = JSON.stringify(this.index, null, 2);
+    if (this.lastSavedIndexContent === content) {
+      return;
+    }
 
     // Always use adapter.write() to avoid race conditions with vault.create().
     try {
       await vault.adapter.write(indexPath, content);
+      this.lastSavedIndexContent = content;
     } catch (e) {
       logger.error("ConversationManager", "Failed to save index", { error: String(e) });
     }
@@ -188,6 +195,7 @@ export class ConversationManager {
       }
 
       const content = await vault.adapter.read(path);
+      this.lastSavedConversationContent.set(id, content);
       const conversation = JSON.parse(content) as StoredConversation;
       conversation.pinnedContext = conversation.pinnedContext ?? [];
       conversation.metadata = this.normalizeMetadata(conversation.metadata);
@@ -207,10 +215,14 @@ export class ConversationManager {
     const path = `${STORAGE_DIR}/${HISTORY_DIR}/${conversation.id}.json`;
 
     const content = JSON.stringify(conversation, null, 2);
+    if (this.lastSavedConversationContent.get(conversation.id) === content) {
+      return;
+    }
 
     // Always use adapter.write() to avoid race conditions with vault.create().
     try {
       await vault.adapter.write(path, content);
+      this.lastSavedConversationContent.set(conversation.id, content);
     } catch (e) {
       logger.error("ConversationManager", "Failed to save conversation", { error: String(e) });
     }
@@ -341,6 +353,7 @@ export class ConversationManager {
     }
 
     this.index.conversations = this.index.conversations.filter((c) => c.id !== id);
+    this.lastSavedConversationContent.delete(id);
     if (this.index.activeConversationId === id) {
       this.index.activeConversationId = this.index.conversations[0]?.id || null;
     }
@@ -515,6 +528,7 @@ export class ConversationManager {
       if (!exists) return null;
 
       const content = await vault.adapter.read(path);
+      this.lastSavedConversationContent.set(id, content);
       const conversation = JSON.parse(content) as StoredConversation;
       conversation.pinnedContext = conversation.pinnedContext ?? [];
       conversation.metadata = this.normalizeMetadata(conversation.metadata);

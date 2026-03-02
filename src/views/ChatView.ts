@@ -47,6 +47,8 @@ export class ChatView extends ItemView {
   private hintLastShownAt = new Map<string, number>();
   private visibleHintIds = new Set<string>();
   private latestHintMetrics: { contextPercentUsed: number; usagePercentUsed: number | null } | null = null;
+  private permissionSignalCacheKey: string | null = null;
+  private permissionSignalCacheValue = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeCodePlugin) {
     super(leaf);
@@ -710,6 +712,23 @@ export class ChatView extends ItemView {
     const cutoff = now - windowMs;
     const permissionRegex = /\bpermission\b/i;
     const frictionRegex = /\b(denied|approve|approval|allow)\b/i;
+    const minuteBucket = Math.floor(now / 60_000);
+    const lastMessageTimestamp = this.messages.length > 0
+      ? this.messages[this.messages.length - 1].timestamp
+      : 0;
+    const slashEvents = this.plugin.settings.slashCommandEvents || [];
+    const lastSlashTimestamp = slashEvents.length > 0 ? slashEvents[slashEvents.length - 1].timestamp : 0;
+    const cacheKey = [
+      minuteBucket,
+      this.messages.length,
+      lastMessageTimestamp,
+      slashEvents.length,
+      lastSlashTimestamp,
+    ].join(":");
+
+    if (this.permissionSignalCacheKey === cacheKey) {
+      return this.permissionSignalCacheValue;
+    }
 
     let signals = 0;
     for (const message of this.messages) {
@@ -722,14 +741,16 @@ export class ChatView extends ItemView {
       }
 
       for (const toolCall of message.toolCalls ?? []) {
-        const content = `${toolCall.error ?? ""}\n${toolCall.output ?? ""}\n${toolCall.stderr ?? ""}`;
+        const content = `${toolCall.error ?? ""}
+${toolCall.output ?? ""}
+${toolCall.stderr ?? ""}`;
         if (permissionRegex.test(content) && frictionRegex.test(content)) {
           signals += 1;
         }
       }
     }
 
-    const slashSignals = (this.plugin.settings.slashCommandEvents || []).reduce((count, event) => {
+    const slashSignals = slashEvents.reduce((count, event) => {
       if (event.timestamp < cutoff) {
         return count;
       }
@@ -739,8 +760,11 @@ export class ChatView extends ItemView {
       return count;
     }, 0);
 
-    return signals + slashSignals;
+    this.permissionSignalCacheKey = cacheKey;
+    this.permissionSignalCacheValue = signals + slashSignals;
+    return this.permissionSignalCacheValue;
   }
+
 
   private mergeToolCalls(
     previous?: ToolCall[],

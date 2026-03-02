@@ -34,6 +34,28 @@ interface ToolUseBlock {
 
 type ContentBlock = TextBlock | ToolUseBlock;
 
+
+const READ_ONLY_TOOLS = new Set([
+  "Read",
+  "Glob",
+  "Grep",
+  "LS",
+  "mcp__obsidian__get_active_file",
+  "mcp__obsidian__get_vault_stats",
+  "mcp__obsidian__get_recent_files",
+  "mcp__obsidian__list_commands",
+]);
+
+const OBSIDIAN_UI_TOOLS = new Set([
+  "mcp__obsidian__open_file",
+  "mcp__obsidian__show_notice",
+  "mcp__obsidian__reveal_in_explorer",
+  "mcp__obsidian__execute_command",
+  "mcp__obsidian__create_note",
+]);
+
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit"]);
+
 export interface UsageSample {
   costUsd: number;
   inputTokens: number;
@@ -582,19 +604,7 @@ export class AgentController {
       return { behavior: "allow", updatedInput: input };
     }
 
-    // Read-only operations can be auto-approved based on settings.
-    const readOnlyTools = [
-      "Read",
-      "Glob",
-      "Grep",
-      "LS",
-      "mcp__obsidian__get_active_file",
-      "mcp__obsidian__get_vault_stats",
-      "mcp__obsidian__get_recent_files",
-      "mcp__obsidian__list_commands",
-    ];
-
-    if (readOnlyTools.includes(toolName)) {
+    if (READ_ONLY_TOOLS.has(toolName)) {
       if (this.plugin.settings.autoApproveVaultReads) {
         return { behavior: "allow", updatedInput: input };
       }
@@ -611,55 +621,33 @@ export class AgentController {
     }
 
     // Auto-approve Obsidian UI tools (safe operations).
-    const obsidianUiTools = [
-      "mcp__obsidian__open_file",
-      "mcp__obsidian__show_notice",
-      "mcp__obsidian__reveal_in_explorer",
-      "mcp__obsidian__execute_command",
-      "mcp__obsidian__create_note",
-    ];
-
-    if (obsidianUiTools.includes(toolName)) {
+    if (OBSIDIAN_UI_TOOLS.has(toolName)) {
       return { behavior: "allow", updatedInput: input };
     }
 
     // Check settings for file write operations.
-    const writeTools = ["Write", "Edit", "MultiEdit"];
-    if (writeTools.includes(toolName)) {
+    if (WRITE_TOOLS.has(toolName)) {
       const autoApproveWrites =
         permissionMode === "acceptEdits" || this.plugin.settings.autoApproveVaultWrites;
       const shouldReviewDiff =
         this.plugin.settings.reviewEditsWithDiff || !autoApproveWrites;
+      const diffResult = (shouldReviewDiff || autoApproveWrites)
+        ? await this.buildDiffForTool(toolName, input)
+        : null;
 
-      if (shouldReviewDiff) {
-        const diffResult = await this.buildDiffForTool(toolName, input);
-        if (diffResult) {
-          const diffApproval = await this.showDiffApprovalModal(toolName, input, diffResult.diff, diffResult.description);
-          if (diffApproval.approved) {
-            await this.handlePermissionChoice(toolName, diffApproval.choice);
-            if (diffResult.backupPath) {
-              const key = this.buildToolEditKey(toolName, input);
-              this.pendingToolEdits.set(key, {
-                filePath: diffResult.filePath,
-                diff: diffResult.diff,
-                backupPath: diffResult.backupPath,
-              });
-            }
-            return { behavior: "allow", updatedInput: input };
-          }
-          return { behavior: "deny", message: "User denied file write permission" };
+      if (shouldReviewDiff && diffResult) {
+        const diffApproval = await this.showDiffApprovalModal(toolName, input, diffResult.diff, diffResult.description);
+        if (diffApproval.approved) {
+          await this.handlePermissionChoice(toolName, diffApproval.choice);
+          this.storePendingToolEdit(toolName, input, diffResult);
+          return { behavior: "allow", updatedInput: input };
         }
+        return { behavior: "deny", message: "User denied file write permission" };
       }
 
       if (autoApproveWrites) {
-        const diffResult = await this.buildDiffForTool(toolName, input);
-        if (diffResult?.backupPath) {
-          const key = this.buildToolEditKey(toolName, input);
-          this.pendingToolEdits.set(key, {
-            filePath: diffResult.filePath,
-            diff: diffResult.diff,
-            backupPath: diffResult.backupPath,
-          });
+        if (diffResult) {
+          this.storePendingToolEdit(toolName, input, diffResult);
         }
         return { behavior: "allow", updatedInput: input };
       }
@@ -715,6 +703,23 @@ export class AgentController {
         logger.info("AgentController", `Added ${toolName} to always-allowed tools`);
       }
     }
+  }
+
+
+  private storePendingToolEdit(
+    toolName: string,
+    input: Record<string, unknown>,
+    diffResult: { filePath: string; diff: string; backupPath?: string }
+  ) {
+    if (!diffResult.backupPath) {
+      return;
+    }
+    const key = this.buildToolEditKey(toolName, input);
+    this.pendingToolEdits.set(key, {
+      filePath: diffResult.filePath,
+      diff: diffResult.diff,
+      backupPath: diffResult.backupPath,
+    });
   }
 
   // Show a permission modal and wait for user response.
@@ -887,6 +892,14 @@ export class AgentController {
     }
   }
 
+  private hashSignature(value: string): string {
+    let hash = 5381;
+    for (let i = 0; i < value.length; i++) {
+      hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
   private getFilePathFromToolInput(toolName: string, input: Record<string, unknown>): string | null {
     if (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") {
       const pathValue = (input.file_path as string) ?? (input.path as string);
@@ -897,17 +910,36 @@ export class AgentController {
 
   private buildToolEditKey(toolName: string, input: Record<string, unknown>): string {
     const filePath = this.getFilePathFromToolInput(toolName, input) ?? "unknown";
-    return `${toolName}:${filePath}:${JSON.stringify(input)}`;
+    if (toolName === "Write") {
+      const content = (input.content as string) ?? (input.text as string) ?? "";
+      return `${toolName}:${filePath}:${this.hashSignature(content)}`;
+    }
+    if (toolName === "Edit") {
+      const oldString = (input.old_string as string) ?? "";
+      const newString = (input.new_string as string) ?? "";
+      const replaceAll = input.replace_all ? "1" : "0";
+      const signature = `${replaceAll}:${oldString}:${newString}`;
+      return `${toolName}:${filePath}:${this.hashSignature(signature)}`;
+    }
+    if (toolName === "MultiEdit") {
+      const edits = Array.isArray(input.edits) ? input.edits : [];
+      const signature = edits
+        .map((edit: any) => `${String(edit?.old_string ?? "")}|${String(edit?.new_string ?? "")}|${edit?.replace_all ? "1" : "0"}`)
+        .join("\n");
+      return `${toolName}:${filePath}:${this.hashSignature(signature)}`;
+    }
+    return `${toolName}:${filePath}`;
   }
 
   private buildMcpServers() {
     const servers: Record<string, any> = {
       obsidian: this.obsidianMcp,
     };
+    const approvedServers = new Set(this.plugin.settings.approvedMcpServers);
 
     for (const server of this.plugin.settings.additionalMcpServers) {
       if (!server.enabled) continue;
-      if (!this.plugin.settings.approvedMcpServers.includes(server.name)) continue;
+      if (!approvedServers.has(server.name)) continue;
       servers[server.name] = {
         type: "stdio",
         command: server.command,

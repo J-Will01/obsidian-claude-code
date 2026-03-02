@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import { findClaudeExecutable } from "../../../src/utils/claudeExecutable";
 
 import {
   createTestAgentController,
@@ -19,7 +20,10 @@ import {
   type SDKMessage,
 } from "../../mocks/claude-sdk/index";
 
-describe("AgentController SDK Integration", () => {
+const hasClaudeCli = !!findClaudeExecutable();
+const describeSdk = hasClaudeCli ? describe : describe.skip;
+
+describeSdk("AgentController SDK Integration", () => {
   let testHarness: TestAgentControllerResult;
 
   beforeEach(() => {

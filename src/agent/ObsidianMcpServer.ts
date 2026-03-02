@@ -14,6 +14,38 @@ export function createObsidianMcpServer(
   app: App,
   vaultPath: string
 ): ObsidianMcpServerInstance {
+  const COMMAND_CACHE_TTL_MS = 30_000;
+  let commandCache: { expiresAt: number; commands: Command[] } | null = null;
+
+  const getCachedCommands = (): Command[] => {
+    const now = Date.now();
+    if (commandCache && commandCache.expiresAt > now) {
+      return commandCache.commands;
+    }
+    const commands = Object.values((app as any).commands.commands) as Command[];
+    commandCache = {
+      commands,
+      expiresAt: now + COMMAND_CACHE_TTL_MS,
+    };
+    return commands;
+  };
+
+  const RECENT_FILES_CACHE_TTL_MS = 10_000;
+  let recentFilesCache: { expiresAt: number; files: ReturnType<App["vault"]["getMarkdownFiles"]> } | null = null;
+
+  const getCachedRecentMarkdownFiles = () => {
+    const now = Date.now();
+    if (recentFilesCache && recentFilesCache.expiresAt > now) {
+      return recentFilesCache.files;
+    }
+    const files = [...app.vault.getMarkdownFiles()].sort((a, b) => b.stat.mtime - a.stat.mtime);
+    recentFilesCache = {
+      files,
+      expiresAt: now + RECENT_FILES_CACHE_TTL_MS,
+    };
+    return files;
+  };
+
   return createSdkMcpServer({
     name: "obsidian",
     version: "1.0.0",
@@ -119,14 +151,26 @@ export function createObsidianMcpServer(
       tool(
         "get_active_file",
         "Get information about the currently active/open file in Obsidian. Returns path, name, stats, and a preview of content.",
-        {},
-        async () => {
+        {
+          previewChars: z
+            .number()
+            .optional()
+            .describe("Number of file characters to include in preview (default: 500)"),
+          metadataOnly: z
+            .boolean()
+            .optional()
+            .describe("If true, skip file content read and return metadata only"),
+        },
+        async (args) => {
           const file = app.workspace.getActiveFile();
           if (file) {
             const stat = file.stat;
-            const content = await app.vault.read(file);
-            const preview =
-              content.slice(0, 500) + (content.length > 500 ? "..." : "");
+            const previewChars = Math.max(0, Math.floor(args.previewChars ?? 500));
+            const metadataOnly = args.metadataOnly === true;
+            const content = metadataOnly ? "" : await app.vault.read(file);
+            const preview = metadataOnly
+              ? ""
+              : content.slice(0, previewChars) + (content.length > previewChars ? "..." : "");
 
             return {
               content: [
@@ -216,9 +260,7 @@ export function createObsidianMcpServer(
             .describe("Maximum number of commands to return (default: 50)"),
         },
         async (args) => {
-          const commands = Object.values(
-            (app as any).commands.commands
-          ) as Command[];
+          const commands = getCachedCommands();
           let filtered = commands;
 
           if (args.filter) {
@@ -349,8 +391,17 @@ export function createObsidianMcpServer(
       tool(
         "get_vault_stats",
         "Get statistics about the vault: total files, folders, note count, etc.",
-        {},
-        async () => {
+        {
+          previewChars: z
+            .number()
+            .optional()
+            .describe("Number of file characters to include in preview (default: 500)"),
+          metadataOnly: z
+            .boolean()
+            .optional()
+            .describe("If true, skip file content read and return metadata only"),
+        },
+        async (args) => {
           const files = app.vault.getFiles();
           const markdownFiles = app.vault.getMarkdownFiles();
           const folders = new Set<string>();
@@ -393,18 +444,15 @@ export function createObsidianMcpServer(
             .describe("Filter to files in this folder"),
         },
         async (args) => {
-          let files = app.vault.getMarkdownFiles();
+          const files = getCachedRecentMarkdownFiles();
 
           // Filter by folder if specified.
-          if (args.folder) {
-            files = files.filter((f) => f.path.startsWith(args.folder!));
-          }
-
-          // Sort by modification time.
-          files.sort((a, b) => b.stat.mtime - a.stat.mtime);
+          const filtered = args.folder
+            ? files.filter((f) => f.path.startsWith(args.folder!))
+            : files;
 
           const limit = args.limit ?? 10;
-          const recent = files.slice(0, limit).map((f) => ({
+          const recent = filtered.slice(0, limit).map((f) => ({
             path: f.path,
             name: f.name,
             modified: new Date(f.stat.mtime).toISOString(),
