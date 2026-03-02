@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vite
 
 import { MarkdownRenderer, MockWorkspaceLeaf } from "obsidian";
 
+import type { ToolCall } from "@/types";
 import { MessageList } from "@/views/MessageList";
 import { ChatView } from "@/views/ChatView";
 import { click, waitForText } from "../../helpers/dom";
@@ -92,6 +93,7 @@ function createHarness(queryMessages: SDKMessage[]) {
   return {
     view,
     messagesContainerEl,
+    conversationManager: view.conversationManager,
   };
 }
 
@@ -134,6 +136,7 @@ function createHarnessWithSequences(querySequences: SDKMessage[][]) {
   return {
     view,
     messagesContainerEl,
+    conversationManager: view.conversationManager,
   };
 }
 
@@ -187,6 +190,30 @@ describe("ChatView end-to-end transcript rendering", () => {
 
     expect(rendered[2].content).toContain("After reading, here is the summary.");
     expect(rendered[2].toolNames).toEqual([]);
+  });
+
+  it("persists streamed assistant segments in displayed order for reopen", async () => {
+    const messages: SDKMessage[] = [
+      createSystemInitMessage("session-e2e-persist-order"),
+      createAssistantMessage("I will inspect the file first."),
+      createToolUseMessage("Read", { file_path: "/notes.md" }, "tool-read-1"),
+      createAssistantMessage("After reading, here is the summary."),
+      createSuccessResultMessage(2, 0.02, "After reading, here is the summary."),
+    ];
+
+    const { view, conversationManager } = createHarness(messages);
+
+    await view.handleSendMessage("Summarize notes");
+
+    const assistantSaves = (conversationManager.addMessageToConversation as Mock).mock.calls
+      .map((call: any[]) => call[1])
+      .filter((message: any) => message?.role === "assistant");
+
+    expect(assistantSaves).toHaveLength(2);
+    expect(assistantSaves[0].content).toContain("I will inspect the file first.");
+    expect(assistantSaves[0].toolCalls?.map((tool: ToolCall) => tool.name)).toEqual(["Read"]);
+    expect(assistantSaves[1].content).toContain("After reading, here is the summary.");
+    expect(assistantSaves[1].toolCalls).toBeUndefined();
   });
 
   it("renders multi-tool phases in visible top-to-bottom order", async () => {

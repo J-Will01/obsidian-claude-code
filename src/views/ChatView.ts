@@ -1857,9 +1857,23 @@ ${toolCall.stderr ?? ""}`;
       // Send to agent and get response.
       const response = await this.agentController.sendMessage(this.buildPromptWithPinnedContext(content.trim()));
 
+      const finalizedInView = this.finalizeStreamingResponse(streamConvId, streamMsgId, response);
+      if (!finalizedInView) {
+        const nowCurrentConv = this.conversationManager.getCurrentConversation();
+        logger.info("ChatView", "Stream completed but user switched conversations", {
+          streamConvId,
+          currentConvId: nowCurrentConv?.id,
+        });
+      }
+
       // Save to the conversation that started the stream (may be different from current if user switched).
       if (streamConvId) {
-        await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const persistedAssistantMessages = finalizedInView
+          ? this.getPersistedAssistantMessagesFromSegments(streamMsgId, response)
+          : [this.cloneMessageForPersistence(response)];
+        for (const persistedMessage of persistedAssistantMessages) {
+          await this.conversationManager.addMessageToConversation(streamConvId, persistedMessage);
+        }
         const usageSample = this.agentController.getLastUsageSample();
         if (usageSample) {
           await this.conversationManager.updateUsageForConversation(
@@ -1881,14 +1895,6 @@ ${toolCall.stderr ?? ""}`;
         if (sessionId) {
           await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);
         }
-      }
-
-      if (!this.finalizeStreamingResponse(streamConvId, streamMsgId, response)) {
-        const nowCurrentConv = this.conversationManager.getCurrentConversation();
-        logger.info("ChatView", "Stream completed but user switched conversations", {
-          streamConvId,
-          currentConvId: nowCurrentConv?.id,
-        });
       }
     } catch (error) {
       const errorMessage = String(error);
@@ -1970,17 +1976,19 @@ ${toolCall.stderr ?? ""}`;
 
           if (shouldSplit) {
             const continuationText = mergedContent.slice(basePrevious.content.length).replace(/^\s+/, "");
+            const hasContinuation = continuationText.trim().length > 0;
             this.messages[baseIndex] = {
               ...basePrevious,
               ...message,
               id: this.streamingMessageId,
               content: basePrevious.content,
               toolCalls: mergedToolCalls,
-              isStreaming: true,
+              // Once streaming moves into a continuation segment, this tool segment is no longer "thinking".
+              isStreaming: !hasContinuation,
             };
             this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
 
-            if (continuationText.trim().length > 0) {
+            if (hasContinuation) {
               const continuationId = this.generateId();
               this.streamingTextMessageId = continuationId;
               this.streamingBaseContentPrefix = basePrevious.content;
@@ -2014,7 +2022,7 @@ ${toolCall.stderr ?? ""}`;
             id: this.streamingMessageId,
             content: basePrevious.content,
             toolCalls: baseToolCalls,
-            isStreaming: true,
+            isStreaming: false,
           };
           this.messageList.updateMessage(this.streamingMessageId, this.messages[baseIndex]);
 
@@ -2035,15 +2043,17 @@ ${toolCall.stderr ?? ""}`;
                 const continuationSuffix = mergedContinuationText
                   .slice(textPrevious.content.length)
                   .replace(/^\s+/, "");
+                const hasContinuationSuffix = continuationSuffix.trim().length > 0;
                 this.messages[textIndex] = {
                   ...textPrevious,
                   toolCalls: mergedTextToolCalls,
                   timestamp: Date.now(),
-                  isStreaming: true,
+                  // This segment becomes fixed once the stream advances to a new continuation.
+                  isStreaming: !hasContinuationSuffix,
                 };
                 this.messageList.updateMessage(this.streamingTextMessageId, this.messages[textIndex]);
 
-                if (continuationSuffix.trim().length > 0) {
+                if (hasContinuationSuffix) {
                   const continuationId = this.generateId();
                   const computedPrefix =
                     message.content.endsWith(continuationSuffix)
@@ -2374,9 +2384,16 @@ ${toolCall.stderr ?? ""}`;
     try {
       const response = await this.agentController.sendMessage(this.buildPromptWithPinnedContext(content));
 
+      const finalizedInView = this.finalizeStreamingResponse(streamConvId, streamMsgId, response);
+
       // Save to the conversation that started the stream.
       if (streamConvId) {
-        await this.conversationManager.addMessageToConversation(streamConvId, response);
+        const persistedAssistantMessages = finalizedInView
+          ? this.getPersistedAssistantMessagesFromSegments(streamMsgId, response)
+          : [this.cloneMessageForPersistence(response)];
+        for (const persistedMessage of persistedAssistantMessages) {
+          await this.conversationManager.addMessageToConversation(streamConvId, persistedMessage);
+        }
         const usageSample = this.agentController.getLastUsageSample();
         if (usageSample) {
           await this.conversationManager.updateUsageForConversation(
@@ -2399,8 +2416,6 @@ ${toolCall.stderr ?? ""}`;
           await this.conversationManager.updateSessionIdForConversation(streamConvId, sessionId);
         }
       }
-
-      this.finalizeStreamingResponse(streamConvId, streamMsgId, response);
     } catch (error) {
       const errorMessage = String(error);
       const isAbort = (error as Error).name === "AbortError" || errorMessage.includes("aborted") || this.isCancelling;
@@ -2500,6 +2515,36 @@ ${toolCall.stderr ?? ""}`;
     }
 
     return true;
+  }
+
+  private cloneMessageForPersistence(message: ChatMessage): ChatMessage {
+    return {
+      ...message,
+      isStreaming: false,
+      toolCalls: message.toolCalls?.map((toolCall) => ({
+        ...toolCall,
+        input: { ...toolCall.input },
+        subagentProgress: toolCall.subagentProgress ? { ...toolCall.subagentProgress } : undefined,
+      })),
+    };
+  }
+
+  private getPersistedAssistantMessagesFromSegments(streamMsgId: string | null, fallback: ChatMessage): ChatMessage[] {
+    const segmentIds = this.streamingSegmentIds.length > 0
+      ? this.streamingSegmentIds
+      : (streamMsgId ? [streamMsgId] : []);
+    const segmentIdSet = new Set(segmentIds);
+
+    const persistedSegments = this.messages
+      .filter((message) => message.role === "assistant" && segmentIdSet.has(message.id))
+      .filter((message) => message.content.trim().length > 0 || (message.toolCalls?.length ?? 0) > 0)
+      .map((message) => this.cloneMessageForPersistence(message));
+
+    if (persistedSegments.length > 0) {
+      return persistedSegments;
+    }
+
+    return [this.cloneMessageForPersistence(fallback)];
   }
 
   async startNewConversation() {

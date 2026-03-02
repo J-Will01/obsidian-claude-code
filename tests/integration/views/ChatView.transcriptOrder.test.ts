@@ -99,8 +99,10 @@ describe("ChatView transcript ordering", () => {
     expect(view.messages[0].id).toBe(baseId);
     expect(view.messages[0].content).toBe("");
     expect(view.messages[0].toolCalls?.[0]?.id).toBe("tool-1");
+    expect(view.messages[0].isStreaming).toBe(false);
     expect(view.messages[1].role).toBe("assistant");
     expect(view.messages[1].content).toContain("Pulling references now.");
+    expect(view.messages[1].isStreaming).toBe(true);
     expect(view.streamingTextMessageId).not.toBe(baseId);
   });
 
@@ -133,7 +135,9 @@ describe("ChatView transcript ordering", () => {
     expect(view.messages).toHaveLength(2);
     expect(view.messages[0].content).toBe("I can look this up.");
     expect(view.messages[0].toolCalls?.[0]?.id).toBe("tool-2");
+    expect(view.messages[0].isStreaming).toBe(false);
     expect(view.messages[1].content).toBe("Here are the first findings.");
+    expect(view.messages[1].isStreaming).toBe(true);
 
     view.handleStreamingMessage({
       id: baseId,
@@ -146,6 +150,8 @@ describe("ChatView transcript ordering", () => {
 
     expect(view.messages[0].content).toBe("I can look this up.");
     expect(view.messages[1].content).toBe("Here are the first findings. More detail from sources.");
+    expect(view.messages[0].isStreaming).toBe(false);
+    expect(view.messages[1].isStreaming).toBe(true);
   });
 
   it("does not duplicate continuation text when snapshots arrive with different spacing", () => {
@@ -233,7 +239,9 @@ describe("ChatView transcript ordering", () => {
     expect(view.messages).toHaveLength(3);
     expect(view.messages[1].content).toBe("Let me find and read the screenshots.");
     expect(view.messages[1].toolCalls?.map((tool) => tool.id)).toEqual(["tool-5"]);
+    expect(view.messages[1].isStreaming).toBe(false);
     expect(view.messages[2].content).toBe("Now let me read the lesson file.");
+    expect(view.messages[2].isStreaming).toBe(true);
 
     view.handleToolCall(thirdTool);
     view.handleStreamingMessage({
@@ -248,8 +256,10 @@ describe("ChatView transcript ordering", () => {
     expect(view.messages).toHaveLength(4);
     expect(view.messages[2].content).toBe("Now let me read the lesson file.");
     expect(view.messages[2].toolCalls?.map((tool) => tool.id)).toEqual(["tool-6"]);
+    expect(view.messages[2].isStreaming).toBe(false);
     expect(view.messages[3].content).toBe("Good. Now I will update the comments file.");
     expect(view.messages[3].toolCalls).toBeUndefined();
+    expect(view.messages[3].isStreaming).toBe(true);
   });
 
   it("prevents rapid double-submit from creating duplicate user messages", async () => {

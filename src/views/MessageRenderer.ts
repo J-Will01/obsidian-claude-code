@@ -30,10 +30,35 @@ export class MessageRenderer {
       this.renderToolCalls();
     }
 
-    // Streaming indicator.
-    if (this.message.isStreaming) {
+    // Streaming indicator only for waiting states (no visible output yet).
+    if (this.shouldRenderStreamingIndicator()) {
       this.renderStreamingIndicator();
     }
+  }
+
+  private shouldRenderStreamingIndicator(): boolean {
+    if (!this.message.isStreaming) return false;
+
+    // Never show "Thinking..." while assistant text is visibly streaming.
+    if (this.message.content.trim().length > 0) return false;
+
+    const toolCalls = this.message.toolCalls || [];
+    if (toolCalls.length === 0) return true;
+
+    // Only show while some tool/subagent is actually in-flight.
+    return toolCalls.some((toolCall) => {
+      if (toolCall.status === "pending" || toolCall.status === "running") {
+        return true;
+      }
+      if (toolCall.isSubagent) {
+        return (
+          toolCall.subagentStatus === "starting" ||
+          toolCall.subagentStatus === "running" ||
+          toolCall.subagentStatus === "thinking"
+        );
+      }
+      return false;
+    });
   }
 
   private renderContent() {
